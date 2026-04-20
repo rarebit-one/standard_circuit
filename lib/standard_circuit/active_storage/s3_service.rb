@@ -2,6 +2,11 @@ require "active_storage"
 require "active_storage/service"
 require "active_storage/service/s3_service"
 
+# NOTE: ActiveStorage's Configurator does
+#   require "active_storage/service/standard_circuit_s3_service"
+# when storage.yml has `service: StandardCircuitS3`. We ship a shim at
+# lib/active_storage/service/standard_circuit_s3_service.rb that requires this
+# file, so the conventional require path works.
 module ActiveStorage
   class Service::StandardCircuitS3Service < Service::S3Service
     WRAPPED_METHODS = %i[
