@@ -21,6 +21,7 @@ RSpec/VerifiedDoubles:
 RSpec/DescribeClass:
   Exclude:
     - spec/standard_circuit/rspec_support_spec.rb
+    - spec/active_storage/service/standard_circuit_s3_service_shim_spec.rb
 
 Style/FrozenStringLiteralComment:
   Enabled: false
