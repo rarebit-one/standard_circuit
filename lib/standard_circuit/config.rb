@@ -37,7 +37,7 @@ module StandardCircuit
     end
 
     def notifiers
-      built = [Notifiers::Logger.new(@logger)]
+      built = [ Notifiers::Logger.new(@logger) ]
       built << Notifiers::Sentry.new if @sentry_enabled
       built << Notifiers::Metrics.new(metric_prefix: @metric_prefix)
       built + @extra_notifiers

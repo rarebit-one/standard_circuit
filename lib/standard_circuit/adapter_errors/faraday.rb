@@ -5,7 +5,7 @@ module StandardCircuit
         def server_errors
           return [] unless defined?(::Faraday::Error)
 
-          errors = [::Faraday::TimeoutError, ::Faraday::ConnectionFailed]
+          errors = [ ::Faraday::TimeoutError, ::Faraday::ConnectionFailed ]
           errors << ::Faraday::ServerError if defined?(::Faraday::ServerError)
           errors.select { |klass| klass.is_a?(Class) }
         end
@@ -13,7 +13,7 @@ module StandardCircuit
         def caller_errors
           return [] unless defined?(::Faraday::ClientError)
 
-          [::Faraday::ClientError]
+          [ ::Faraday::ClientError ]
         end
       end
     end

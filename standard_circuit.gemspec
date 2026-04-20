@@ -3,8 +3,8 @@ require_relative "lib/standard_circuit/version"
 Gem::Specification.new do |spec|
   spec.name        = "standard_circuit"
   spec.version     = StandardCircuit::VERSION
-  spec.authors     = ["Jaryl Sim"]
-  spec.email       = ["code@jaryl.dev"]
+  spec.authors     = [ "Jaryl Sim" ]
+  spec.email       = [ "code@jaryl.dev" ]
   spec.homepage    = "https://github.com/rarebit-one/standard_circuit"
   spec.summary     = "Circuit breaker primitives for Rails apps, built on stoplight."
   spec.description = "StandardCircuit wraps the stoplight gem with opinionated error taxonomy, Sentry notifiers, ActiveStorage S3 and ActionMailer adapters, and test helpers shared across Rails apps."

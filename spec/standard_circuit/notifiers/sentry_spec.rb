@@ -5,7 +5,7 @@ RSpec.describe StandardCircuit::Notifiers::Sentry do
   let(:error) { StandardError.new("upstream down") }
 
   describe "#notify" do
-    context "on GREEN -> RED transition" do
+    context "when transitioning GREEN -> RED" do
       it "captures a warning-level Sentry message with circuit metadata" do
         captured = capture_sentry_message do
           described_class.new.notify(light, "green", "red", error)
@@ -23,7 +23,7 @@ RSpec.describe StandardCircuit::Notifiers::Sentry do
       end
     end
 
-    context "on YELLOW -> RED transition" do
+    context "when transitioning YELLOW -> RED" do
       it "still captures (any transition into red counts)" do
         captured = capture_sentry_message do
           described_class.new.notify(light, "yellow", "red", error)
@@ -33,7 +33,7 @@ RSpec.describe StandardCircuit::Notifiers::Sentry do
       end
     end
 
-    context "on non-red transitions" do
+    context "when transitioning to a non-red color" do
       it "does not capture" do
         captured = capture_sentry_message do
           described_class.new.notify(light, "red", "green", nil)

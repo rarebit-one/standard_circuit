@@ -16,7 +16,7 @@ RSpec.describe StandardCircuit do
     before do
       described_class.configure do |c|
         c.register(:http, threshold: 2, cool_off_time: 10,
-                   tracked_errors: [Net::OpenTimeout])
+                   tracked_errors: [ Net::OpenTimeout ])
       end
     end
 
@@ -38,7 +38,7 @@ RSpec.describe StandardCircuit do
       before do
         described_class.configure do |c|
           c.register_prefix(:s3, threshold: 3, cool_off_time: 30,
-                            tracked_errors: [Net::ReadTimeout])
+                            tracked_errors: [ Net::ReadTimeout ])
         end
       end
 
@@ -94,7 +94,7 @@ RSpec.describe StandardCircuit do
     before do
       described_class.configure do |c|
         c.register(:lock, threshold: 1, cool_off_time: 10,
-                   tracked_errors: [Net::OpenTimeout])
+                   tracked_errors: [ Net::OpenTimeout ])
       end
     end
 
