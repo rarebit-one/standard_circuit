@@ -12,7 +12,7 @@ RSpec.configure do |config|
   config.order = :random
   Kernel.srand config.seed
 
-  config.before(:each) do
+  config.before do
     StandardCircuit.reset!
   end
 end

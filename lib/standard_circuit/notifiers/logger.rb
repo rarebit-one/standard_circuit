@@ -17,8 +17,8 @@ module StandardCircuit
       private
 
       def build_message(light, from_color, to_color, error)
-        words = ["Stoplight", light.name, "switched from", from_color, "to", to_color]
-        words += ["because", error.class.name, error.message] if error
+        words = [ "Stoplight", light.name, "switched from", from_color, "to", to_color ]
+        words += [ "because", error.class.name, error.message ] if error
         words.join(" ")
       end
     end

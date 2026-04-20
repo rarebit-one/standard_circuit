@@ -1,13 +1,26 @@
 inherit_gem:
   rubocop-rails-omakase: rubocop.yml
 
-require:
+plugins:
   - rubocop-rspec
 
 AllCops:
   TargetRubyVersion: 3.4
   NewCops: enable
   SuggestExtensions: false
+
+RSpec/SpecFilePathFormat:
+  Enabled: false
+
+RSpec/MessageSpies:
+  Enabled: false
+
+RSpec/VerifiedDoubles:
+  Enabled: false
+
+RSpec/DescribeClass:
+  Exclude:
+    - spec/standard_circuit/rspec_support_spec.rb
 
 Style/FrozenStringLiteralComment:
   Enabled: false

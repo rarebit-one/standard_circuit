@@ -9,7 +9,7 @@ RSpec.describe ActiveStorage::Service::StandardCircuitS3Service do
     service.instance_variable_set(:@bucket, bucket)
     StandardCircuit.configure do |c|
       c.register_prefix(:s3, threshold: 3, cool_off_time: 30,
-                        tracked_errors: [Net::OpenTimeout])
+                        tracked_errors: [ Net::OpenTimeout ])
     end
   end
 
@@ -53,7 +53,7 @@ RSpec.describe ActiveStorage::Service::StandardCircuitS3Service do
 
       service.upload
       other_service.upload
-      expect(captured).to eq([:"s3_user-content", :"s3_system-assets"])
+      expect(captured).to eq([ :"s3_user-content", :"s3_system-assets" ])
     end
   end
 end

@@ -15,12 +15,12 @@ RSpec.describe StandardCircuit::Mailer::DeliveryMethod do
   end
 
   let(:fake_mail) do
-    Struct.new(:to, :subject).new(["user@example.com"], "Welcome")
+    Struct.new(:to, :subject).new([ "user@example.com" ], "Welcome")
   end
 
   before do
     StandardCircuit.configure do |c|
-      c.register(:sendgrid, threshold: 3, cool_off_time: 30, tracked_errors: [Net::OpenTimeout])
+      c.register(:sendgrid, threshold: 3, cool_off_time: 30, tracked_errors: [ Net::OpenTimeout ])
     end
   end
 
@@ -48,7 +48,7 @@ RSpec.describe StandardCircuit::Mailer::DeliveryMethod do
         end
 
         def deliver!(mail)
-          [settings, mail]
+          [ settings, mail ]
         end
       end
     end
@@ -68,7 +68,7 @@ RSpec.describe StandardCircuit::Mailer::DeliveryMethod do
       )
 
       result = method.deliver!(fake_mail)
-      expect(result).to eq([{ api_key: "secret" }, fake_mail])
+      expect(result).to eq([ { api_key: "secret" }, fake_mail ])
     end
 
     it "raises ArgumentError for unregistered symbols" do
@@ -103,7 +103,7 @@ RSpec.describe StandardCircuit::Mailer::DeliveryMethod do
       end
 
       expect(error).to be_a(circuit_open_error)
-      expect(error.recipients).to eq(["user@example.com"])
+      expect(error.recipients).to eq([ "user@example.com" ])
       expect(error.subject).to eq("Welcome")
     end
   end
