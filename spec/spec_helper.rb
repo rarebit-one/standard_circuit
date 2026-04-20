@@ -1,0 +1,18 @@
+require "standard_circuit"
+
+RSpec.configure do |config|
+  config.expect_with :rspec do |c|
+    c.syntax = :expect
+  end
+
+  config.mock_with :rspec do |m|
+    m.verify_partial_doubles = true
+  end
+
+  config.order = :random
+  Kernel.srand config.seed
+
+  config.before(:each) do
+    StandardCircuit.reset!
+  end
+end
