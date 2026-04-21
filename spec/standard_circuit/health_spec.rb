@@ -207,5 +207,52 @@ RSpec.describe StandardCircuit::Health do
       expected = { "yellow" => :degraded, "red" => :critical }.fetch(color, :ok)
       expect(StandardCircuit.health_overall).to eq(expected)
     end
+
+    it "accepts a pre-computed snapshot so callers avoid double-reading the store" do
+      StandardCircuit.configure do |c|
+        c.register(:payments, criticality: :critical)
+      end
+      snapshot = StandardCircuit.health_snapshot
+
+      expect(StandardCircuit.health_overall(snapshot)).to eq(:ok)
+      expect(described_class).not_to receive(:snapshot)
+      StandardCircuit.health_overall(snapshot)
+    end
+  end
+
+  describe ".health_report" do
+    before do
+      StandardCircuit.configure do |c|
+        c.register(:payments, criticality: :critical)
+        c.register(:emails, criticality: :standard)
+      end
+    end
+
+    it "returns a single Hash with :status and :circuits keys" do
+      report = StandardCircuit.health_report
+      expect(report).to be_a(Hash)
+      expect(report.keys).to contain_exactly(:status, :circuits)
+    end
+
+    it "derives status from the same snapshot used for circuits" do
+      # Taking a single snapshot means the two fields cannot disagree across
+      # a race where a circuit flips between reads.
+      report = StandardCircuit.health_report
+      derived = described_class.overall(report[:circuits])
+      expect(report[:status]).to eq(derived)
+    end
+
+    it "reflects :critical when a :critical circuit is red" do
+      StandardCircuit.runner.light_for(:payments).lock(Stoplight::Color::RED)
+      report = StandardCircuit.health_report
+      expect(report[:status]).to eq(:critical)
+      payments = report[:circuits].find { |e| e[:name] == :payments }
+      expect(payments[:color]).to eq("red")
+    end
+
+    it "takes one snapshot even though both fields are populated" do
+      expect(described_class).to receive(:snapshot).once.and_call_original
+      StandardCircuit.health_report
+    end
   end
 end

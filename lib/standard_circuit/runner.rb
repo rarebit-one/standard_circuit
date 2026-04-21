@@ -53,8 +53,20 @@ module StandardCircuit
       Health.snapshot(self, @config)
     end
 
-    def health_overall
-      Health.overall(health_snapshot)
+    # Accepts an optional pre-computed snapshot so callers that also need the
+    # raw circuits list don't read the data store twice (which could yield
+    # an inconsistent status/circuits pair). Prefer +health_report+ when you
+    # need both.
+    def health_overall(snapshot = nil)
+      Health.overall(snapshot || health_snapshot)
+    end
+
+    # Atomic health report — takes a single snapshot and returns both the
+    # rolled-up status and the per-circuit list. Preferred for rendering a
+    # health-check endpoint so status and circuits describe the same moment.
+    def health_report
+      snapshot = health_snapshot
+      { status: Health.overall(snapshot), circuits: snapshot }
     end
 
     private

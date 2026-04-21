@@ -3,16 +3,15 @@ module StandardCircuit
   # and the Config's registered circuits / prefixes and return structured
   # snapshots plus an overall health status.
   #
-  # Intended for mounting in a Rails HealthController or equivalent:
+  # Intended for mounting in a Rails HealthController. Prefer +health_report+
+  # over calling +health_snapshot+ and +health_overall+ separately — the
+  # combined call takes a single atomic snapshot, so the rendered status and
+  # circuits always describe the same moment:
   #
-  #   snapshot = StandardCircuit.health_snapshot
-  #   status   = StandardCircuit.health_overall
-  #   render json: { status: status, circuits: snapshot },
-  #          status: (status == :critical ? 503 : 200)
+  #   report = StandardCircuit.health_report
+  #   render json: report, status: (report[:status] == :critical ? 503 : 200)
   #
   module Health
-    OVERALL_LEVELS = [ :ok, :degraded, :critical ].freeze
-
     module_function
 
     # Build a snapshot of every relevant circuit.
@@ -72,16 +71,12 @@ module StandardCircuit
     private_class_method :prefix_entries
 
     def build_entry(light, spec)
-      color = light.color
-      entry = {
+      {
         name: light.name.to_sym,
-        color: color,
+        color: light.color,
         locked: locked?(light),
         criticality: spec.criticality
       }
-      cool_off_until = cool_off_until_for(light, spec)
-      entry[:cool_off_until] = cool_off_until if color == "red" && cool_off_until
-      entry
     end
     private_class_method :build_entry
 
@@ -91,27 +86,17 @@ module StandardCircuit
     end
     private_class_method :locked?
 
+    # Reading +light.state+ can raise when the data store is unreachable
+    # (e.g. Redis connection dropped). Swallow the failure so the health
+    # endpoint still returns the rest of the snapshot, but log via the
+    # configured logger so operators can see the underlying fault.
     def safe_state(light)
       light.state
-    rescue StandardError
+    rescue StandardError => e
+      logger = StandardCircuit.config.logger
+      logger&.warn("StandardCircuit::Health.safe_state failed for #{light.name}: #{e.class}: #{e.message}")
       nil
     end
     private_class_method :safe_state
-
-    # Best-effort lookup of when a red circuit will next attempt recovery.
-    # Falls back to +nil+ when Stoplight's state-store snapshot is unavailable,
-    # which prompts callers to omit the key from the entry.
-    def cool_off_until_for(light, _spec)
-      return nil unless light.respond_to?(:state_store)
-
-      store = light.state_store
-      return nil unless store.respond_to?(:state_snapshot)
-
-      snapshot = store.state_snapshot
-      snapshot.respond_to?(:recovery_scheduled_after) ? snapshot.recovery_scheduled_after : nil
-    rescue StandardError
-      nil
-    end
-    private_class_method :cool_off_until_for
   end
 end

@@ -58,8 +58,12 @@ module StandardCircuit
       runner.health_snapshot
     end
 
-    def health_overall
-      runner.health_overall
+    def health_overall(snapshot = nil)
+      runner.health_overall(snapshot)
+    end
+
+    def health_report
+      runner.health_report
     end
   end
 end
