@@ -40,6 +40,23 @@ module StandardCircuit
       @lights.compute_if_absent(name.to_sym) { build_light(name.to_sym) }
     end
 
+    # Snapshot Hash of the current cached lights. Used by Health to discover
+    # prefix-matched circuits that have been exercised at least once — we can't
+    # enumerate prefix-matched dynamic names any other way.
+    def cached_lights
+      hash = {}
+      @lights.each_pair { |name, light| hash[name] = light }
+      hash
+    end
+
+    def health_snapshot
+      Health.snapshot(self, @config)
+    end
+
+    def health_overall
+      Health.overall(health_snapshot)
+    end
+
     private
 
     def execute(name, fallback, &block)

@@ -3,6 +3,8 @@ module StandardCircuit
     DEFAULT_THRESHOLD = 3
     DEFAULT_COOL_OFF = 30
     DEFAULT_WINDOW = 60
+    DEFAULT_CRITICALITY = :standard
+    CRITICALITIES = [ :critical, :standard, :optional ].freeze
 
     CircuitSpec = Struct.new(
       :threshold,
@@ -10,15 +12,23 @@ module StandardCircuit
       :window_size,
       :tracked_errors,
       :skipped_errors,
+      :criticality,
       keyword_init: true
     ) do
       def self.build(**opts)
+        criticality = opts.fetch(:criticality, DEFAULT_CRITICALITY)
+        unless CRITICALITIES.include?(criticality)
+          raise ArgumentError,
+            "invalid criticality #{criticality.inspect}; must be one of #{CRITICALITIES.inspect}"
+        end
+
         new(
           threshold: opts.fetch(:threshold, DEFAULT_THRESHOLD),
           cool_off_time: opts.fetch(:cool_off_time, DEFAULT_COOL_OFF),
           window_size: opts.fetch(:window_size, DEFAULT_WINDOW),
           tracked_errors: opts.fetch(:tracked_errors, NetworkErrors.defaults),
-          skipped_errors: opts.fetch(:skipped_errors, [])
+          skipped_errors: opts.fetch(:skipped_errors, []),
+          criticality: criticality
         )
       end
     end
@@ -41,6 +51,12 @@ module StandardCircuit
       built << Notifiers::Sentry.new if @sentry_enabled
       built << Notifiers::Metrics.new(metric_prefix: @metric_prefix)
       built + @extra_notifiers
+    end
+
+    def reset_registry!
+      @circuits.clear
+      @prefixes.clear
+      @extra_notifiers.clear
     end
 
     def register(name, **opts)
