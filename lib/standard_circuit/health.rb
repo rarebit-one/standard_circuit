@@ -53,7 +53,7 @@ module StandardCircuit
 
     def named_entries(runner, config)
       config.circuits.map do |name, spec|
-        build_entry(runner.light_for(name), spec)
+        build_entry(runner.light_for(name), spec, config)
       end
     end
     private_class_method :named_entries
@@ -65,23 +65,23 @@ module StandardCircuit
         spec = config.spec_for(name)
         next unless spec # defensive: light exists but no matching registration
 
-        build_entry(light, spec)
+        build_entry(light, spec, config)
       end
     end
     private_class_method :prefix_entries
 
-    def build_entry(light, spec)
+    def build_entry(light, spec, config)
       {
         name: light.name.to_sym,
         color: light.color,
-        locked: locked?(light),
+        locked: locked?(light, config),
         criticality: spec.criticality
       }
     end
     private_class_method :build_entry
 
-    def locked?(light)
-      state = safe_state(light)
+    def locked?(light, config)
+      state = safe_state(light, config)
       state == Stoplight::State::LOCKED_RED || state == Stoplight::State::LOCKED_GREEN
     end
     private_class_method :locked?
@@ -89,12 +89,12 @@ module StandardCircuit
     # Reading +light.state+ can raise when the data store is unreachable
     # (e.g. Redis connection dropped). Swallow the failure so the health
     # endpoint still returns the rest of the snapshot, but log via the
-    # configured logger so operators can see the underlying fault.
-    def safe_state(light)
+    # passed-in config's logger so operators see the underlying fault and
+    # tests that inject a throwaway Config don't leak to the global logger.
+    def safe_state(light, config)
       light.state
     rescue StandardError => e
-      logger = StandardCircuit.config.logger
-      logger&.warn("StandardCircuit::Health.safe_state failed for #{light.name}: #{e.class}: #{e.message}")
+      config.logger&.warn("StandardCircuit::Health.safe_state failed for #{light.name}: #{e.class}: #{e.message}")
       nil
     end
     private_class_method :safe_state

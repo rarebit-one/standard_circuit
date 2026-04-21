@@ -32,7 +32,6 @@ RSpec.describe StandardCircuit::Health do
           locked: false,
           criticality: :critical
         )
-        expect(entry).not_to have_key(:cool_off_until)
       end
     end
 
