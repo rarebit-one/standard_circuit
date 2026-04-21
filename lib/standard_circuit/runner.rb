@@ -40,6 +40,35 @@ module StandardCircuit
       @lights.compute_if_absent(name.to_sym) { build_light(name.to_sym) }
     end
 
+    # Snapshot Hash of the current cached lights. Used by Health to discover
+    # prefix-matched circuits that have been exercised at least once — we can't
+    # enumerate prefix-matched dynamic names any other way.
+    def cached_lights
+      hash = {}
+      @lights.each_pair { |name, light| hash[name] = light }
+      hash
+    end
+
+    def health_snapshot
+      Health.snapshot(self, @config)
+    end
+
+    # Accepts an optional pre-computed snapshot so callers that also need the
+    # raw circuits list don't read the data store twice (which could yield
+    # an inconsistent status/circuits pair). Prefer +health_report+ when you
+    # need both.
+    def health_overall(snapshot = nil)
+      Health.overall(snapshot || health_snapshot)
+    end
+
+    # Atomic health report — takes a single snapshot and returns both the
+    # rolled-up status and the per-circuit list. Preferred for rendering a
+    # health-check endpoint so status and circuits describe the same moment.
+    def health_report
+      snapshot = health_snapshot
+      { status: Health.overall(snapshot), circuits: snapshot }
+    end
+
     private
 
     def execute(name, fallback, &block)

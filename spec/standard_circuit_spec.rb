@@ -10,6 +10,50 @@ RSpec.describe StandardCircuit do
       expect(result).to be_a(StandardCircuit::Config)
       expect(result.spec_for(:example).threshold).to eq(2)
     end
+
+    context "with a criticality keyword" do
+      it "defaults to :standard" do
+        result = described_class.configure do |c|
+          c.register(:defaulted)
+        end
+        expect(result.spec_for(:defaulted).criticality).to eq(:standard)
+      end
+
+      it "accepts :critical, :standard, and :optional" do
+        result = described_class.configure do |c|
+          c.register(:a, criticality: :critical)
+          c.register(:b, criticality: :standard)
+          c.register(:c, criticality: :optional)
+        end
+        expect(result.spec_for(:a).criticality).to eq(:critical)
+        expect(result.spec_for(:b).criticality).to eq(:standard)
+        expect(result.spec_for(:c).criticality).to eq(:optional)
+      end
+
+      it "propagates criticality through register_prefix" do
+        result = described_class.configure do |c|
+          c.register_prefix(:s3, criticality: :optional,
+                            tracked_errors: [ Net::ReadTimeout ])
+        end
+        expect(result.spec_for(:s3_bucket).criticality).to eq(:optional)
+      end
+
+      it "raises ArgumentError for an invalid criticality" do
+        expect {
+          described_class.configure do |c|
+            c.register(:bad, criticality: :urgent)
+          end
+        }.to raise_error(ArgumentError, /invalid criticality/)
+      end
+
+      it "raises ArgumentError for an invalid prefix criticality" do
+        expect {
+          described_class.configure do |c|
+            c.register_prefix(:bad, criticality: "critical")
+          end
+        }.to raise_error(ArgumentError, /invalid criticality/)
+      end
+    end
   end
 
   describe ".run" do

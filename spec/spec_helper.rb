@@ -14,5 +14,7 @@ RSpec.configure do |config|
 
   config.before do
     StandardCircuit.reset!
+    StandardCircuit.config.reset_registry!
+    StandardCircuit.config.data_store = Stoplight::DataStore::Memory.new
   end
 end

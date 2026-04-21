@@ -12,6 +12,7 @@ require "standard_circuit/notifiers/logger"
 require "standard_circuit/notifiers/sentry"
 require "standard_circuit/notifiers/metrics"
 require "standard_circuit/config"
+require "standard_circuit/health"
 require "standard_circuit/runner"
 
 module StandardCircuit
@@ -51,6 +52,18 @@ module StandardCircuit
 
     def reset!
       runner.reset!
+    end
+
+    def health_snapshot
+      runner.health_snapshot
+    end
+
+    def health_overall(snapshot = nil)
+      runner.health_overall(snapshot)
+    end
+
+    def health_report
+      runner.health_report
     end
   end
 end
