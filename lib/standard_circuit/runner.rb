@@ -31,9 +31,19 @@ module StandardCircuit
       @forced_states.clear
     end
 
+    # Full state reset for tests. Clears the light cache, forced states, AND
+    # swaps the Stoplight data store to a fresh Memory instance. Clearing the
+    # cache alone is not sufficient: failure counters live in the data store,
+    # so a spec that deliberately trips a circuit would otherwise leak RedLight
+    # into later specs. We only swap the store when the existing one is already
+    # a Memory store, because replacing a Redis store (production config) would
+    # silently defeat shared-process coordination.
     def reset!
       @lights.clear
       @forced_states.clear
+      return unless @config.data_store.is_a?(Stoplight::DataStore::Memory)
+
+      @config.data_store = Stoplight::DataStore::Memory.new
     end
 
     def light_for(name)
