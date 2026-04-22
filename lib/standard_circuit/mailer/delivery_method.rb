@@ -1,4 +1,5 @@
 require "action_mailer"
+require_relative "circuit_open_error"
 
 module StandardCircuit
   module Mailer
@@ -28,7 +29,7 @@ module StandardCircuit
       end
 
       def retry_error_class
-        settings.fetch(:retry_error_class)
+        settings.fetch(:retry_error_class, StandardCircuit::Mailer::CircuitOpenError)
       end
 
       def underlying_instance

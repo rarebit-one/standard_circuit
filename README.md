@@ -42,6 +42,23 @@ StandardCircuit.run(:stripe) do
 end
 ```
 
+## Health endpoint
+
+StandardCircuit ships an opt-in controller that renders `StandardCircuit.health_report` as JSON. It returns 503 when the rolled-up status is `:critical` (so orchestrators pull the instance out of rotation) and 200 otherwise.
+
+It's opt-in — not auto-required — so apps that don't want a health route don't pay for it.
+
+```ruby
+# config/routes.rb
+require "standard_circuit/health_controller"
+
+Rails.application.routes.draw do
+  get "/health", to: "standard_circuit/health#show"
+end
+```
+
+The controller inherits from `ActionController::API` to sidestep app-level filters (authentication, bootstrap redirects, etc.) so probes can call it anonymously.
+
 See [`standard_circuit-design.md`](../standard_circuit-design.md) for the full design.
 
 ## License

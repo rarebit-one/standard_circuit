@@ -12,8 +12,6 @@ module StandardCircuit
       end
 
       def notify(light, _from_color, to_color, _error)
-        return unless defined?(::Sentry::Metrics)
-
         state = STATE_FOR_COLOR.fetch(to_color, to_color)
         ::Sentry::Metrics.count(
           "#{@metric_prefix}.circuit_breaker",

@@ -106,5 +106,25 @@ RSpec.describe StandardCircuit::Mailer::DeliveryMethod do
       expect(error.recipients).to eq([ "user@example.com" ])
       expect(error.subject).to eq("Welcome")
     end
+
+    it "defaults to StandardCircuit::Mailer::CircuitOpenError when retry_error_class is not set" do
+      method = described_class.new(
+        underlying: underlying,
+        circuit: :sendgrid
+      )
+
+      StandardCircuit.force_open(:sendgrid)
+
+      error = nil
+      begin
+        method.deliver!(fake_mail)
+      rescue StandardError => e
+        error = e
+      end
+
+      expect(error).to be_a(StandardCircuit::Mailer::CircuitOpenError)
+      expect(error.recipients).to eq([ "user@example.com" ])
+      expect(error.subject).to eq("Welcome")
+    end
   end
 end
