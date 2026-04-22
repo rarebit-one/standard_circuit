@@ -15,6 +15,7 @@ require "standard_circuit/config"
 require "standard_circuit/health"
 require "standard_circuit/runner"
 require "standard_circuit/mailer/delivery_method"
+require "standard_circuit/controller_support"
 
 module StandardCircuit
   class Error < StandardError; end

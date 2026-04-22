@@ -172,4 +172,35 @@ RSpec.describe StandardCircuit do
       expect(lights.uniq.size).to eq(1)
     end
   end
+
+  describe ".reset!" do
+    before do
+      described_class.configure do |c|
+        c.register(:flaky, threshold: 1, cool_off_time: 10,
+                   tracked_errors: [ RuntimeError ])
+      end
+    end
+
+    it "swaps a fresh Memory data store so failure counters don't persist" do
+      described_class.run(:flaky) { raise "boom" } rescue nil
+      expect(described_class.runner.light_for(:flaky).color).to eq("red")
+
+      described_class.reset!
+
+      expect(described_class.runner.light_for(:flaky).color).to eq("green")
+    end
+
+    it "preserves a non-Memory data store (e.g. Redis in production)" do
+      redis_like_store = Class.new do
+        def names
+          []
+        end
+      end.new
+      described_class.config.data_store = redis_like_store
+
+      described_class.reset!
+
+      expect(described_class.config.data_store).to be(redis_like_store)
+    end
+  end
 end
