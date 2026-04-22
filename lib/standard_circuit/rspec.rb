@@ -14,6 +14,5 @@ require "standard_circuit"
 RSpec.configure do |config|
   config.before(:each) do
     StandardCircuit.reset!
-    StandardCircuit.reset_force!
   end
 end

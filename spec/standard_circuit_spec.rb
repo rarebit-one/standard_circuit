@@ -182,7 +182,7 @@ RSpec.describe StandardCircuit do
     end
 
     it "swaps a fresh Memory data store so failure counters don't persist" do
-      described_class.run(:flaky) { raise "boom" } rescue nil
+      expect { described_class.run(:flaky) { raise "boom" } }.to raise_error(RuntimeError)
       expect(described_class.runner.light_for(:flaky).color).to eq("red")
 
       described_class.reset!
