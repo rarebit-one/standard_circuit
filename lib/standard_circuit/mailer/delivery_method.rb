@@ -1,4 +1,5 @@
 require "action_mailer"
+require_relative "circuit_open_error"
 
 module StandardCircuit
   module Mailer
