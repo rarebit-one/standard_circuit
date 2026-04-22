@@ -147,8 +147,6 @@ module StandardCircuit
     end
 
     def emit_request_metric(name, status, duration)
-      return unless defined?(::Sentry::Metrics)
-
       prefix = @config.metric_prefix
       attrs = { service: name.to_s, status: status.to_s }
       ::Sentry::Metrics.count("#{prefix}.request", value: 1, attributes: attrs)

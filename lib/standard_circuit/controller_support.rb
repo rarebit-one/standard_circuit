@@ -42,8 +42,6 @@ module StandardCircuit
     end
 
     def emit_circuit_open_metric(error)
-      return unless defined?(::Sentry::Metrics)
-
       prefix = StandardCircuit.config.metric_prefix
       ::Sentry::Metrics.count(
         "#{prefix}.request",

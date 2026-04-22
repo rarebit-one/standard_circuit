@@ -28,7 +28,7 @@ module StandardCircuit
       end
 
       def retry_error_class
-        settings.fetch(:retry_error_class)
+        settings.fetch(:retry_error_class, StandardCircuit::Mailer::CircuitOpenError)
       end
 
       def underlying_instance
