@@ -50,9 +50,22 @@ module StandardCircuit
 
     if defined?(::Rails::Railtie)
       class Railtie < ::Rails::Railtie
+        # ActionMailer's `add_delivery_method` unconditionally resets
+        # `<symbol>_settings` to its `default_options` arg. If the host app
+        # has already registered :standard_circuit (e.g. from its own
+        # `on_load(:action_mailer)` block in an env file, queued earlier),
+        # calling `add_delivery_method` again would wipe the settings the
+        # app just wrote — causing `KeyError: key not found: :circuit` at
+        # delivery time. Skip if already registered.
+        def self.install(mailer_class)
+          return if mailer_class.delivery_methods.key?(:standard_circuit)
+
+          mailer_class.add_delivery_method :standard_circuit, StandardCircuit::Mailer::DeliveryMethod
+        end
+
         initializer "standard_circuit.action_mailer" do
           ActiveSupport.on_load(:action_mailer) do
-            add_delivery_method :standard_circuit, StandardCircuit::Mailer::DeliveryMethod
+            StandardCircuit::Mailer::Railtie.install(self)
           end
         end
       end
