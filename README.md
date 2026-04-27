@@ -19,6 +19,22 @@ Wraps the upstream `stoplight` gem with:
 gem "standard_circuit", git: "https://github.com/rarebit-one/standard_circuit", ref: "<sha>"
 ```
 
+Then run the install generator to drop a commented-out initializer into
+`config/initializers/standard_circuit.rb`:
+
+```bash
+bundle add standard_circuit
+rails g standard_circuit:install
+```
+
+Pass `--with-health-endpoint` to also generate
+`config/initializers/standard_circuit_health.rb` (which requires the opt-in
+health controller); the generator prints the matching route line for you to
+add to `config/routes.rb`.
+
+The generator is idempotent — re-running skips an existing initializer
+unless you pass `--force`.
+
 ## Quick start
 
 ```ruby
