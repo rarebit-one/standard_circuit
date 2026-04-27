@@ -1,10 +1,4 @@
 require "spec_helper"
-# Load Rails::Railtie before delivery_method.rb so its conditional
-# `class Railtie < ::Rails::Railtie` block is evaluated. The library file
-# is loaded first by spec_helper (via `require "standard_circuit"`); use
-# `load` to re-evaluate it now that the Railtie base class is available.
-require "rails/railtie"
-load File.expand_path("../../../../lib/standard_circuit/mailer/delivery_method.rb", __FILE__)
 
 RSpec.describe StandardCircuit::Mailer::Railtie, ".install" do
   let(:mailer_class) { Class.new(ActionMailer::Base) }
@@ -28,5 +22,6 @@ RSpec.describe StandardCircuit::Mailer::Railtie, ".install" do
 
     expect(mailer_class.delivery_methods)
       .to include(standard_circuit: StandardCircuit::Mailer::DeliveryMethod)
+    expect(mailer_class.standard_circuit_settings).to eq({})
   end
 end
