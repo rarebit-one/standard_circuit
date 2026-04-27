@@ -7,6 +7,9 @@ All notable changes to this project will be documented in this file.
 ### Added
 - `StandardCircuit::ErrorTaxonomies::{Stripe,Smtp,Aws,Faraday}.tracked` — pre-combined `NetworkErrors.defaults + AdapterErrors::X.server_errors` arrays. Saves consumers from typing the same line for every circuit they register and gives a single place to evolve what counts as a "server-side outage" per integration. `caller_errors` (validation/auth/etc.) stay on `AdapterErrors::*` because the right `skipped_errors` set is usually app-specific.
 
+### Changed
+- `ControllerSupport.circuit_open_fallback` now appends a fresh `rescue_from Stoplight::Error::RedLight` handler each time it's called (deduplicating any prior RedLight handler on the class first, so repeated calls don't accumulate). Rails matches `rescue_handlers` last-declared-first, so a `rescue_from StandardError` catch-all declared *after* `include StandardCircuit::ControllerSupport` previously shadowed the gem's RedLight handler. As long as `circuit_open_fallback` is called after any catch-all rescues in your controller, RedLight now keeps routing to `handle_circuit_open` reliably.
+
 ## [0.1.1] - 2026-04-27
 
 ### Fixed

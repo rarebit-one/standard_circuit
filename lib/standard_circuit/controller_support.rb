@@ -14,6 +14,14 @@ module StandardCircuit
     end
 
     class_methods do
+      # Rails iterates `rescue_handlers` from last-declared to first to find a
+      # match, so a `rescue_from StandardError` declared *after* `include
+      # StandardCircuit::ControllerSupport` shadows the gem's `RedLight` handler
+      # registered in `included`. Re-appending the handler here makes the DSL
+      # call effectively bump it to the end of the list — so as long as
+      # `circuit_open_fallback` is the last thing in your controller (or at
+      # least after any `rescue_from StandardError`-style catch-alls),
+      # `Stoplight::Error::RedLight` keeps routing to `handle_circuit_open`.
       def circuit_open_fallback(status: :service_unavailable, html: nil, json: nil, stream: nil)
         self._circuit_open_fallback = {
           status: status,
@@ -21,6 +29,10 @@ module StandardCircuit
           json: json,
           stream: stream
         }
+
+        rescue_from Stoplight::Error::RedLight do |error|
+          handle_circuit_open(error)
+        end
       end
     end
 
