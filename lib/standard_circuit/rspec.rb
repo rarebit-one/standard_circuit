@@ -9,6 +9,10 @@ require "standard_circuit"
 #   leak listeners into the next example. The internal Logger/Sentry/Metrics
 #   subscribers are re-registered if a spec calls `StandardCircuit.configure`
 #   or `StandardCircuit.subscribers.setup!`.
+# - Resets the circuit/prefix/extra_notifier registry so circuits registered
+#   in one example don't leak into the next. Specs that need a registered
+#   circuit must call `StandardCircuit.configure` (or `config.register`) per
+#   example.
 # - Swaps a fresh Stoplight::DataStore::Memory into the Config when the
 #   current store is already Memory, so failure counters from one spec don't
 #   leak into the next. Redis stores are left alone.
@@ -18,6 +22,7 @@ require "standard_circuit"
 RSpec.configure do |config|
   config.before(:each) do
     StandardCircuit.reset!
+    StandardCircuit.config.reset_registry!
     StandardCircuit.subscribers.teardown!
   end
 end
