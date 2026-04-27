@@ -86,21 +86,28 @@ module StandardCircuit
       light = light_for(name)
 
       result = fallback ? light.run(fallback, &block) : light.run(&block)
-      emit_request_metric(name, :success, duration_ms(started_at))
+      duration = duration_ms(started_at)
+      emit_request_metric(name, :success, duration)
+      emit_run_completed(name, status: :success, duration_ms: duration)
       result
     rescue Stoplight::Error::RedLight => e
-      emit_request_metric(name, :circuit_open, duration_ms(started_at))
+      duration = duration_ms(started_at)
+      emit_request_metric(name, :circuit_open, duration)
+      emit_run_completed(name, status: :circuit_open, duration_ms: duration, error: e)
       raise e unless fallback
 
       emit_fallback_invoked(name, reason: :circuit_open)
       fallback.call(nil)
     rescue StandardError => e
-      emit_request_metric(name, :failure, duration_ms(started_at))
+      duration = duration_ms(started_at)
+      emit_request_metric(name, :failure, duration)
+      emit_run_completed(name, status: :failure, duration_ms: duration, error: e)
       raise e
     end
 
     def run_forced_open(name, fallback)
       emit_request_metric(name, :circuit_open, 0)
+      emit_run_completed(name, status: :circuit_open, duration_ms: 0)
       if fallback
         emit_fallback_invoked(name, reason: :forced_open)
         return fallback.call(nil)
@@ -159,6 +166,17 @@ module StandardCircuit
         circuit: name.to_s,
         reason: reason,
         criticality: spec&.criticality)
+    end
+
+    def emit_run_completed(name, status:, duration_ms:, error: nil)
+      spec = @config.spec_for(name)
+      EventEmitter.emit("standard_circuit.run.completed",
+        circuit: name.to_s,
+        status: status,
+        duration_ms: duration_ms,
+        criticality: spec&.criticality,
+        error_class: error&.class&.name,
+        error_message: error&.message)
     end
 
     def monotonic_now

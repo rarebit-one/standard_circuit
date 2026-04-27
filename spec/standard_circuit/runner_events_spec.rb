@@ -64,5 +64,79 @@ RSpec.describe StandardCircuit::Runner do
       expect(events.size).to eq(1)
       expect(events.first[1]).to include(circuit: "s3", scope: :prefix)
     end
+
+    describe "standard_circuit.run.completed (per-call event)" do
+      it "emits a :success payload with duration_ms and nil error fields" do
+        events = []
+        callback = ->(name, _s, _f, _i, payload) { events << [ name, payload ] }
+        ActiveSupport::Notifications.subscribed(callback, "standard_circuit.run.completed") do
+          StandardCircuit.run(:flaky) { :ok }
+        end
+
+        expect(events.size).to eq(1)
+        payload = events.first[1]
+        expect(payload).to include(
+          circuit: "flaky",
+          status: :success,
+          criticality: :standard,
+          error_class: nil,
+          error_message: nil
+        )
+        expect(payload[:duration_ms]).to be > 0
+      end
+
+      it "emits a :failure payload with the original error class and message" do
+        events = []
+        callback = ->(name, _s, _f, _i, payload) { events << [ name, payload ] }
+        ActiveSupport::Notifications.subscribed(callback, "standard_circuit.run.completed") do
+          expect { StandardCircuit.run(:flaky) { raise "boom" } }.to raise_error(RuntimeError)
+        end
+
+        expect(events.size).to eq(1)
+        expect(events.first[1]).to include(
+          circuit: "flaky",
+          status: :failure,
+          error_class: "RuntimeError",
+          error_message: "boom"
+        )
+      end
+
+      it "emits a :circuit_open payload after the circuit trips" do
+        StandardCircuit.run(:flaky) { raise "boom" }
+      rescue RuntimeError
+        events = []
+        callback = ->(name, _s, _f, _i, payload) { events << [ name, payload ] }
+        ActiveSupport::Notifications.subscribed(callback, "standard_circuit.run.completed") do
+          expect { StandardCircuit.run(:flaky) { :unreachable } }
+            .to raise_error(Stoplight::Error::RedLight)
+        end
+
+        expect(events.size).to eq(1)
+        expect(events.first[1]).to include(
+          circuit: "flaky",
+          status: :circuit_open,
+          error_class: "Stoplight::Error::RedLight",
+          error_message: be_a(String)
+        )
+      end
+
+      # Pins the contract: force_open emits the same key set as natural opens —
+      # subscribers reading payload[:error_class] should not handle missing keys.
+      it "emits a :circuit_open payload for force_open with all keys present" do
+        events = []
+        callback = ->(name, _s, _f, _i, payload) { events << [ name, payload ] }
+        ActiveSupport::Notifications.subscribed(callback, "standard_circuit.run.completed") do
+          StandardCircuit.force_open(:flaky)
+          expect { StandardCircuit.run(:flaky) { :unreachable } }
+            .to raise_error(Stoplight::Error::RedLight)
+        end
+
+        expect(events.size).to eq(1)
+        expect(events.first[1]).to include(
+          circuit: "flaky", status: :circuit_open, duration_ms: 0,
+          criticality: :standard, error_class: nil, error_message: nil
+        )
+      end
+    end
   end
 end
