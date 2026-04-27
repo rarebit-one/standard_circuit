@@ -46,7 +46,7 @@ StandardCircuit.configure do |c|
   c.register(:stripe,
     threshold: 5,
     cool_off_time: 30,
-    tracked_errors: StandardCircuit::NetworkErrors.defaults + StandardCircuit::AdapterErrors::Stripe.server_errors,
+    tracked_errors: StandardCircuit::ErrorTaxonomies::Stripe.tracked,
     skipped_errors: StandardCircuit::AdapterErrors::Stripe.caller_errors)
 end
 ```
@@ -94,6 +94,38 @@ StandardCircuit.configure do |c|
   c.add_notifier(->(name, payload) { MyAlerting.notify(name, payload) })
 end
 ```
+
+## Streaming and non-controller contexts
+
+`ControllerSupport.circuit_open_fallback` only works for non-streaming responses — once a `Live` controller has flushed any output, Rails can't render an error template over the wire. For a streaming controller, catch `Stoplight::Error::RedLight` *inside* the streaming proc and write a degraded payload before the stream closes:
+
+```ruby
+class Api::MessagesController < ApplicationController
+  include ActionController::Live
+
+  def stream
+    response.headers["Content-Type"] = "application/x-ndjson"
+
+    StandardCircuit.run(:openai) do
+      llm.stream do |chunk|
+        response.stream.write({ delta: chunk }.to_json + "\n")
+      end
+    end
+  rescue Stoplight::Error::RedLight
+    # Only reachable when the circuit was already open at call time —
+    # Stoplight raises RedLight before executing the block, not mid-stream.
+    # Errors raised mid-stream propagate as their original class through the
+    # `ensure` below; add a broader rescue if you also need to write a
+    # terminal NDJSON line for those.
+    response.stream.write({ error: "service_unavailable" }.to_json + "\n")
+  ensure
+    response.stream.close
+  end
+end
+```
+
+Same pattern applies in background jobs (where `circuit_open_fallback` doesn't help): wrap the work in `StandardCircuit.run` and rescue `Stoplight::Error::RedLight` to either `discard_on` (avoid thundering retries) or `retry_on` with backoff (defer until cool-off), depending on whether eventual delivery is required.
+
 
 ## Health endpoint
 
