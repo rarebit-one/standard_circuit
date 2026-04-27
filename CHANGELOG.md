@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- CI and release workflows migrated to the shared `rarebit-one/.github` reusable workflows (`reusable-gem-ci.yml@v1`, `reusable-gem-release.yml@v1`); `.github/workflows/ci.yml` and `release.yml` are now thin shims.
+
 ### Added
 - README section on streaming responses and non-controller contexts: shows the recipe for catching `Stoplight::Error::RedLight` inside a `Live` controller's streaming proc (where `circuit_open_fallback` can't render over an open response), and notes the equivalent pattern for background jobs.
 - `rails g standard_circuit:install` — Rails install generator. Writes `config/initializers/standard_circuit.rb` with commented-out examples covering the public Config DSL (`register`, `register_prefix`, notifiers, data store, criticality). Idempotent: re-running on an existing initializer skips with a clear message; pass `--force` to overwrite. Pass `--with-health-endpoint` to also write `config/initializers/standard_circuit_health.rb` (which `require`s the opt-in `HealthController`) and print the route line to add to `config/routes.rb`. The generator does not auto-edit `routes.rb` — too invasive — so consumers paste the printed line themselves.
