@@ -46,13 +46,6 @@ module StandardCircuit
       @extra_notifiers = []
     end
 
-    def notifiers
-      built = [ Notifiers::Logger.new(@logger) ]
-      built << Notifiers::Sentry.new if @sentry_enabled
-      built << Notifiers::Metrics.new(metric_prefix: @metric_prefix)
-      built + @extra_notifiers
-    end
-
     def reset_registry!
       @circuits.clear
       @prefixes.clear
@@ -60,14 +53,34 @@ module StandardCircuit
     end
 
     def register(name, **opts)
-      @circuits[name.to_sym] = CircuitSpec.build(**opts)
+      spec = CircuitSpec.build(**opts)
+      @circuits[name.to_sym] = spec
+      EventEmitter.emit("standard_circuit.circuit.registered",
+        circuit: name.to_s,
+        criticality: spec.criticality,
+        scope: :name)
+      spec
     end
 
     def register_prefix(prefix, **opts)
-      @prefixes[prefix.to_s] = CircuitSpec.build(**opts)
+      spec = CircuitSpec.build(**opts)
+      @prefixes[prefix.to_s] = spec
+      EventEmitter.emit("standard_circuit.circuit.registered",
+        circuit: prefix.to_s,
+        criticality: spec.criticality,
+        scope: :prefix)
+      spec
     end
 
+    # Register a host-supplied subscriber. Subscribers must respond to
+    # `call(event_name, payload)` — Stoplight-shaped 4-arg notifiers from the
+    # 0.1.x API are no longer accepted as extras (Logger / Sentry / Metrics
+    # demonstrate the new shape).
     def add_notifier(notifier)
+      unless notifier.respond_to?(:call)
+        raise ArgumentError,
+          "extra notifiers must respond to `call(event_name, payload)`; got #{notifier.class}"
+      end
       @extra_notifiers << notifier
     end
 

@@ -9,15 +9,19 @@ require "standard_circuit/adapter_errors/aws"
 require "standard_circuit/adapter_errors/faraday"
 require "standard_circuit/adapter_errors/smtp"
 require "standard_circuit/error_taxonomies"
+require "standard_circuit/event_emitter"
+require "standard_circuit/notifier_bridge"
 require "standard_circuit/notifiers/logger"
 require "standard_circuit/notifiers/sentry"
 require "standard_circuit/notifiers/metrics"
+require "standard_circuit/subscribers"
 require "standard_circuit/config"
 require "standard_circuit/health"
 require "standard_circuit/runner"
 require "standard_circuit/mailer/circuit_open_error"
 require "standard_circuit/mailer/delivery_method"
 require "standard_circuit/controller_support"
+require "standard_circuit/engine" if defined?(::Rails::Engine)
 
 module StandardCircuit
   class Error < StandardError; end
@@ -27,6 +31,7 @@ module StandardCircuit
     def configure
       yield config
       runner.apply_config!(config)
+      subscribers.setup!
       config
     end
 
@@ -36,6 +41,10 @@ module StandardCircuit
 
     def runner
       @runner ||= Runner.new
+    end
+
+    def subscribers
+      @subscribers ||= Subscribers.new
     end
 
     def run(name, fallback: nil, &block)

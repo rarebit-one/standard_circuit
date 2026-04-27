@@ -92,6 +92,7 @@ module StandardCircuit
       emit_request_metric(name, :circuit_open, duration_ms(started_at))
       raise e unless fallback
 
+      emit_fallback_invoked(name, error: nil, reason: :circuit_open)
       fallback.call(nil)
     rescue StandardError => e
       emit_request_metric(name, :failure, duration_ms(started_at))
@@ -100,7 +101,10 @@ module StandardCircuit
 
     def run_forced_open(name, fallback)
       emit_request_metric(name, :circuit_open, 0)
-      return fallback.call(nil) if fallback
+      if fallback
+        emit_fallback_invoked(name, error: nil, reason: :forced_open)
+        return fallback.call(nil)
+      end
 
       spec = @config.spec_for(name)
       raise Stoplight::Error::RedLight.new(
@@ -138,12 +142,8 @@ module StandardCircuit
         tracked_errors: spec.tracked_errors,
         skipped_errors: spec.skipped_errors,
         data_store: @config.data_store,
-        notifiers: notifiers
+        notifiers: [ NotifierBridge.new(@config) ]
       )
-    end
-
-    def notifiers
-      @config.notifiers
     end
 
     def emit_request_metric(name, status, duration)
@@ -151,6 +151,20 @@ module StandardCircuit
       attrs = { service: name.to_s, status: status.to_s }
       ::Sentry::Metrics.count("#{prefix}.request", value: 1, attributes: attrs)
       ::Sentry::Metrics.distribution("#{prefix}.request.duration", duration, unit: "millisecond", attributes: attrs)
+    end
+
+    def emit_fallback_invoked(name, error:, reason:)
+      spec = @config.spec_for(name)
+      payload = {
+        circuit: name.to_s,
+        reason: reason,
+        criticality: spec&.criticality
+      }
+      if error
+        payload[:error_class] = error.class.name
+        payload[:error_message] = error.message
+      end
+      EventEmitter.emit("standard_circuit.circuit.fallback_invoked", payload)
     end
 
     def monotonic_now

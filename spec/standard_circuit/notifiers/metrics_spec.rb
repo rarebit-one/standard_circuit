@@ -1,17 +1,16 @@
 require "spec_helper"
 
 RSpec.describe StandardCircuit::Notifiers::Metrics do
-  let(:light) { instance_double(Stoplight::Domain::Light, name: "stripe") }
-
-  describe "#notify" do
+  describe "#call" do
     {
-      "red" => "opened",
-      "green" => "closed",
-      "yellow" => "half_open"
-    }.each do |color, state|
-      it "emits state=#{state} for color=#{color}" do
+      "standard_circuit.circuit.opened"   => "opened",
+      "standard_circuit.circuit.closed"   => "closed",
+      "standard_circuit.circuit.degraded" => "half_open"
+    }.each do |event_name, state|
+      it "emits state=#{state} for #{event_name}" do
         captured = capture_metric do
-          described_class.new(metric_prefix: "external").notify(light, "green", color, nil)
+          described_class.new(metric_prefix: "external").call(event_name,
+            circuit: "stripe", from_color: "green", to_color: state)
         end
 
         expect(captured[:name]).to eq("external.circuit_breaker")
@@ -21,10 +20,20 @@ RSpec.describe StandardCircuit::Notifiers::Metrics do
 
     it "honors a custom metric prefix" do
       captured = capture_metric do
-        described_class.new(metric_prefix: "web").notify(light, "green", "red", nil)
+        described_class.new(metric_prefix: "web").call("standard_circuit.circuit.opened",
+          circuit: "stripe", from_color: "green", to_color: "red")
       end
 
       expect(captured[:name]).to eq("web.circuit_breaker")
+    end
+
+    it "ignores unrelated events" do
+      captured = capture_metric do
+        described_class.new.call("standard_circuit.circuit.fallback_invoked",
+          circuit: "stripe", reason: :circuit_open)
+      end
+
+      expect(captured).to be_nil
     end
   end
 
