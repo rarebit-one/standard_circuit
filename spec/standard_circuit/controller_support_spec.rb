@@ -31,6 +31,33 @@ RSpec.describe StandardCircuit::ControllerSupport do
       handlers = controller_class.rescue_handlers.map(&:first)
       expect(handlers).to include("Stoplight::Error::RedLight")
     end
+
+    it "wins last-declared lookup over a user `rescue_from StandardError` declared earlier" do
+      shadowing_class = Class.new(ActionController::Base) do
+        include StandardCircuit::ControllerSupport
+
+        rescue_from StandardError do
+          :user_handler
+        end
+
+        circuit_open_fallback html: -> { :gem_handler }
+      end
+
+      handlers = shadowing_class.rescue_handlers
+      red_light_index = handlers.rindex { |h| h.first == "Stoplight::Error::RedLight" }
+      standard_error_index = handlers.rindex { |h| h.first == "StandardError" }
+
+      expect(red_light_index).to be > standard_error_index,
+        "expected RedLight handler appended after the StandardError catch-all"
+    end
+
+    it "does not accumulate duplicate handlers when circuit_open_fallback is called multiple times" do
+      controller_class.circuit_open_fallback(html: -> { :first })
+      controller_class.circuit_open_fallback(html: -> { :second })
+
+      red_light_count = controller_class.rescue_handlers.count { |h| h.first == "Stoplight::Error::RedLight" }
+      expect(red_light_count).to eq(1)
+    end
   end
 
   describe "#handle_circuit_open dispatching" do
