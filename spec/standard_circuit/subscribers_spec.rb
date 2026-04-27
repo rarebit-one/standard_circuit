@@ -64,4 +64,62 @@ RSpec.describe StandardCircuit::Subscribers do
       expect(received).to be_empty
     end
   end
+
+  describe "Rails.event path" do
+    let(:rails_event) do
+      events = []
+      bus = double("Rails.event")
+      allow(bus).to receive(:notify) do |name, **payload|
+        events.each { |sub| sub.emit(name: name, payload: payload) }
+      end
+      allow(bus).to receive(:subscribe) { |sub| events << sub }
+      allow(bus).to receive(:unsubscribe) { |sub| events.delete(sub) }
+      bus
+    end
+
+    let(:rails_double) do
+      double("Rails").tap do |rails|
+        allow(rails).to receive(:event).and_return(rails_event)
+      end
+    end
+
+    before do
+      stub_const("Rails", rails_double)
+    end
+
+    it "wraps subscribers and forwards standard_circuit.* events" do
+      received = []
+      StandardCircuit.config.add_notifier(->(name, payload) { received << [ name, payload ] })
+      StandardCircuit.subscribers.setup!
+
+      Rails.event.notify("standard_circuit.circuit.opened",
+        circuit: "stripe", from_color: "green", to_color: "red")
+
+      expect(received).to eq([ [
+        "standard_circuit.circuit.opened",
+        { circuit: "stripe", from_color: "green", to_color: "red" }
+      ] ])
+    end
+
+    it "filters out events outside the standard_circuit. prefix" do
+      received = []
+      StandardCircuit.config.add_notifier(->(name, _p) { received << name })
+      StandardCircuit.subscribers.setup!
+
+      Rails.event.notify("other.event", circuit: "x")
+
+      expect(received).to be_empty
+    end
+
+    it "teardown! unsubscribes the wrapper" do
+      received = []
+      StandardCircuit.config.add_notifier(->(name, _p) { received << name })
+      StandardCircuit.subscribers.setup!
+      StandardCircuit.subscribers.teardown!
+
+      Rails.event.notify("standard_circuit.circuit.opened", circuit: "x")
+
+      expect(received).to be_empty
+    end
+  end
 end

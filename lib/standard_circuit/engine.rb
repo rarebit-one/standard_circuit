@@ -7,8 +7,6 @@ module StandardCircuit
   # circuit breaker is independent of ActiveRecord — apps that don't load AR
   # still need observability.
   class Engine < ::Rails::Engine
-    isolate_namespace StandardCircuit
-
     initializer "standard_circuit.subscribers", after: :load_config_initializers do
       StandardCircuit.subscribers.setup!
     end

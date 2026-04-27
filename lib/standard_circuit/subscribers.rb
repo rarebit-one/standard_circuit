@@ -13,6 +13,7 @@ module StandardCircuit
   # @api private
   class Subscribers
     EVENT_PATTERN = "standard_circuit."
+    EVENT_REGEXP = /\A#{Regexp.escape(EVENT_PATTERN)}/
 
     def initialize
       @rails_event_subscribers = []
@@ -24,10 +25,17 @@ module StandardCircuit
       register(internal_subscribers + extra_subscribers)
     end
 
+    # Tear down both backends. Rails.event subscribers are unsubscribed
+    # unconditionally — we recorded them at registration time, so we must
+    # remove them even if Rails.event has since become unavailable (e.g. test
+    # `hide_const("Rails")`). Otherwise the wrappers would remain live in the
+    # bus while we believe they are gone.
     def teardown!
       @rails_event_subscribers.each do |subscriber|
-        next unless EventEmitter.rails_event_available?
-        ::Rails.event.unsubscribe(subscriber)
+        ::Rails.event.unsubscribe(subscriber) if EventEmitter.rails_event_available?
+      rescue StandardError
+        # If Rails.event is gone (test isolation), we can do nothing more —
+        # clearing the array still releases our reference.
       end
       @rails_event_subscribers.clear
 
@@ -54,8 +62,7 @@ module StandardCircuit
         ::Rails.event.subscribe(wrapper)
         @rails_event_subscribers << wrapper
       else
-        regexp = /\A#{Regexp.escape(EVENT_PATTERN)}/
-        handle = ::ActiveSupport::Notifications.subscribe(regexp) do |name, _start, _finish, _id, payload|
+        handle = ::ActiveSupport::Notifications.subscribe(EVENT_REGEXP) do |name, _start, _finish, _id, payload|
           subscriber.call(name, payload)
         end
         @as_subscribers << handle
@@ -70,19 +77,10 @@ module StandardCircuit
       list
     end
 
+    # Config#add_notifier already enforces that every entry responds to :call,
+    # so we can hand the array straight through to register/1.
     def extra_subscribers
-      StandardCircuit.config.extra_notifiers.map do |notifier|
-        if notifier.respond_to?(:call)
-          notifier
-        else
-          # Backwards-compat shim: legacy notifiers had a 4-arg `notify`. We
-          # cannot reliably reconstruct a stoplight Light, so unwrap to the
-          # event-payload form. Such notifiers must migrate to `call`.
-          raise ArgumentError,
-            "extra notifier #{notifier.inspect} must respond to `call(event_name, payload)`. " \
-            "Stoplight-shaped notifiers (notify/4) are no longer supported as extras; subscribe to events directly."
-        end
-      end
+      StandardCircuit.config.extra_notifiers
     end
 
     # Adapts a `call(name, payload)` subscriber to the Rails.event#subscribe

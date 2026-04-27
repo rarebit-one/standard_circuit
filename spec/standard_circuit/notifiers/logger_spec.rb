@@ -45,5 +45,18 @@ RSpec.describe StandardCircuit::Notifiers::Logger do
 
       expect(io.string).not_to include("because")
     end
+
+    it "ignores non-transition events that lack from_color/to_color" do
+      described_class.new(logger).call(
+        "standard_circuit.circuit.fallback_invoked",
+        circuit: "stripe", reason: :circuit_open, criticality: :critical
+      )
+      described_class.new(logger).call(
+        "standard_circuit.circuit.registered",
+        circuit: "stripe", criticality: :critical, scope: :name
+      )
+
+      expect(io.string).to be_empty
+    end
   end
 end

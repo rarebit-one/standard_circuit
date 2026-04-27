@@ -92,7 +92,7 @@ module StandardCircuit
       emit_request_metric(name, :circuit_open, duration_ms(started_at))
       raise e unless fallback
 
-      emit_fallback_invoked(name, error: nil, reason: :circuit_open)
+      emit_fallback_invoked(name, reason: :circuit_open)
       fallback.call(nil)
     rescue StandardError => e
       emit_request_metric(name, :failure, duration_ms(started_at))
@@ -102,7 +102,7 @@ module StandardCircuit
     def run_forced_open(name, fallback)
       emit_request_metric(name, :circuit_open, 0)
       if fallback
-        emit_fallback_invoked(name, error: nil, reason: :forced_open)
+        emit_fallback_invoked(name, reason: :forced_open)
         return fallback.call(nil)
       end
 
@@ -153,18 +153,12 @@ module StandardCircuit
       ::Sentry::Metrics.distribution("#{prefix}.request.duration", duration, unit: "millisecond", attributes: attrs)
     end
 
-    def emit_fallback_invoked(name, error:, reason:)
+    def emit_fallback_invoked(name, reason:)
       spec = @config.spec_for(name)
-      payload = {
+      EventEmitter.emit("standard_circuit.circuit.fallback_invoked",
         circuit: name.to_s,
         reason: reason,
-        criticality: spec&.criticality
-      }
-      if error
-        payload[:error_class] = error.class.name
-        payload[:error_message] = error.message
-      end
-      EventEmitter.emit("standard_circuit.circuit.fallback_invoked", payload)
+        criticality: spec&.criticality)
     end
 
     def monotonic_now
