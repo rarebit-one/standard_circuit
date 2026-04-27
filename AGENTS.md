@@ -18,7 +18,7 @@ bundle exec rubocop
 bundle exec rubocop -A
 
 # Security scans (matches CI)
-bundle exec brakeman --no-pager
+bundle exec brakeman --no-pager --force
 bundle exec bundler-audit --update
 ```
 
