@@ -1,10 +1,9 @@
 require "spec_helper"
 
 RSpec.describe StandardCircuit::ErrorTaxonomies do
-  describe described_class::Stripe do
-    it "combines NetworkErrors.defaults with AdapterErrors::Stripe.server_errors" do
-      expected = StandardCircuit::NetworkErrors.defaults +
-        StandardCircuit::AdapterErrors::Stripe.server_errors
+  shared_examples "an adapter taxonomy" do |adapter_module|
+    it "combines NetworkErrors.defaults with the adapter's server_errors" do
+      expected = StandardCircuit::NetworkErrors.defaults + adapter_module.server_errors
       expect(described_class.tracked).to eq(expected)
     end
 
@@ -15,27 +14,19 @@ RSpec.describe StandardCircuit::ErrorTaxonomies do
     end
   end
 
+  describe described_class::Stripe do
+    it_behaves_like "an adapter taxonomy", StandardCircuit::AdapterErrors::Stripe
+  end
+
   describe described_class::Smtp do
-    it "combines NetworkErrors.defaults with AdapterErrors::Smtp.server_errors" do
-      expected = StandardCircuit::NetworkErrors.defaults +
-        StandardCircuit::AdapterErrors::Smtp.server_errors
-      expect(described_class.tracked).to eq(expected)
-    end
+    it_behaves_like "an adapter taxonomy", StandardCircuit::AdapterErrors::Smtp
   end
 
   describe described_class::Aws do
-    it "combines NetworkErrors.defaults with AdapterErrors::Aws.server_errors" do
-      expected = StandardCircuit::NetworkErrors.defaults +
-        StandardCircuit::AdapterErrors::Aws.server_errors
-      expect(described_class.tracked).to eq(expected)
-    end
+    it_behaves_like "an adapter taxonomy", StandardCircuit::AdapterErrors::Aws
   end
 
   describe described_class::Faraday do
-    it "combines NetworkErrors.defaults with AdapterErrors::Faraday.server_errors" do
-      expected = StandardCircuit::NetworkErrors.defaults +
-        StandardCircuit::AdapterErrors::Faraday.server_errors
-      expect(described_class.tracked).to eq(expected)
-    end
+    it_behaves_like "an adapter taxonomy", StandardCircuit::AdapterErrors::Faraday
   end
 end
