@@ -25,4 +25,8 @@ Gem::Specification.new do |spec|
   spec.add_dependency "concurrent-ruby", "~> 1.3"
   spec.add_dependency "sentry-ruby", ">= 5.17"
   spec.add_dependency "railties", ">= 8.0"
+
+  spec.add_development_dependency "brakeman"
+  spec.add_development_dependency "bundler-audit"
+  spec.add_development_dependency "simplecov"
 end
