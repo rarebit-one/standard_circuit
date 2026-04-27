@@ -66,7 +66,7 @@ StandardCircuit.configure do |config|
 
   # config.register_prefix(:s3,
   #   threshold: 10,
-  #   tracked_errors: StandardCircuit::AdapterErrors::Aws.server_errors,
+  #   tracked_errors: StandardCircuit::ErrorTaxonomies::Aws.tracked,
   #   criticality: :standard)
 
   # ---------------------------------------------------------------------------
