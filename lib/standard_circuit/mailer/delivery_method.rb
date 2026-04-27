@@ -66,7 +66,14 @@ module StandardCircuit
           mailer_class.add_delivery_method :standard_circuit, StandardCircuit::Mailer::DeliveryMethod
         end
 
-        initializer "standard_circuit.action_mailer" do
+        # `before: "action_mailer.set_configs"` makes our on_load(:action_mailer)
+        # block queue ahead of Rails' own. set_configs forwards
+        # `config.action_mailer.standard_circuit_settings=` to ActionMailer::Base,
+        # which raises `NoMethodError` unless the accessor (defined by
+        # `add_delivery_method`) already exists. Running first means apps can
+        # configure with the natural `config.action_mailer.standard_circuit_settings = {...}`
+        # form without monkey-patching this Initializer's @before field.
+        initializer "standard_circuit.action_mailer", before: "action_mailer.set_configs" do
           ActiveSupport.on_load(:action_mailer) do
             StandardCircuit::Mailer::Railtie.install(self)
           end
