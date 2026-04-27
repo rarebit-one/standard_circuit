@@ -38,7 +38,7 @@ module StandardCircuit
       def create_initializer_file
         path = "config/initializers/standard_circuit.rb"
         if File.exist?(File.join(destination_root, path)) && !options[:force]
-          say_status("identical", "#{path} already present, skipping (use --force to overwrite)", :blue)
+          say_status("skip", "#{path} already present, skipping (use --force to overwrite)", :yellow)
           return
         end
 
@@ -50,7 +50,7 @@ module StandardCircuit
 
         path = "config/initializers/standard_circuit_health.rb"
         if File.exist?(File.join(destination_root, path)) && !options[:force]
-          say_status("identical", "#{path} already present, skipping (use --force to overwrite)", :blue)
+          say_status("skip", "#{path} already present, skipping (use --force to overwrite)", :yellow)
         else
           template "health_initializer.rb.tt", path
         end

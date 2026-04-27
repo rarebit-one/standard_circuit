@@ -102,15 +102,24 @@ RSpec.describe StandardCircuit::Generators::InstallGenerator, type: :generator d
       expect(File).to exist(initializer_path)
     end
 
-    it "skips the health initializer when it already exists" do
+    it "skips the health initializer when it already exists without --force" do
+      run_generator([ "--with-health-endpoint" ])
+      sentinel = "# user customisation\n"
+      File.write(health_initializer_path, sentinel)
+
+      output = run_generator([ "--with-health-endpoint" ])
+
+      expect(output).to match(/already present, skipping/)
+      expect(File.read(health_initializer_path)).to eq(sentinel)
+    end
+
+    it "overwrites the health initializer when --force is passed" do
       run_generator([ "--with-health-endpoint" ])
       sentinel = "# user customisation\n"
       File.write(health_initializer_path, sentinel)
 
       output = run_generator([ "--with-health-endpoint", "--force" ])
 
-      # --force overwrites the main initializer, but the health initializer
-      # also gets re-templated under --force; verify --force overwrites both.
       expect(File.read(health_initializer_path)).to include('require "standard_circuit/health_controller"')
       expect(output).to include('get "/health", to: "standard_circuit/health#show"')
     end
