@@ -66,7 +66,10 @@ module StandardCircuit
           mailer_class.add_delivery_method :standard_circuit, StandardCircuit::Mailer::DeliveryMethod
         end
 
-        initializer "standard_circuit.action_mailer" do
+        # `before:` ensures `add_delivery_method` (which defines the
+        # `standard_circuit_settings=` accessor) runs before Rails' set_configs
+        # tries to forward `config.action_mailer.standard_circuit_settings=`.
+        initializer "standard_circuit.action_mailer", before: "action_mailer.set_configs" do
           ActiveSupport.on_load(:action_mailer) do
             StandardCircuit::Mailer::Railtie.install(self)
           end
