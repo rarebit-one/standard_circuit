@@ -32,10 +32,7 @@ RSpec.describe StandardCircuit::ControllerSupport do
       expect(handlers).to include("Stoplight::Error::RedLight")
     end
 
-    it "appends a fresh RedLight rescue_from each time circuit_open_fallback is called" do
-      # Calling the DSL bumps the RedLight handler to the end of the
-      # rescue_handlers list, ensuring it wins last-declared lookup over
-      # an earlier `rescue_from StandardError`.
+    it "wins last-declared lookup over a user `rescue_from StandardError` declared earlier" do
       shadowing_class = Class.new(ActionController::Base) do
         include StandardCircuit::ControllerSupport
 
@@ -47,11 +44,19 @@ RSpec.describe StandardCircuit::ControllerSupport do
       end
 
       handlers = shadowing_class.rescue_handlers
-      red_light_indices = handlers.each_index.select { |i| handlers[i].first == "Stoplight::Error::RedLight" }
-      standard_error_index = handlers.index { |h| h.first == "StandardError" }
+      red_light_index = handlers.rindex { |h| h.first == "Stoplight::Error::RedLight" }
+      standard_error_index = handlers.rindex { |h| h.first == "StandardError" }
 
-      expect(red_light_indices.last).to be > standard_error_index,
-        "expected RedLight handler to be appended after the StandardError catch-all so it wins last-declared lookup"
+      expect(red_light_index).to be > standard_error_index,
+        "expected RedLight handler appended after the StandardError catch-all"
+    end
+
+    it "does not accumulate duplicate handlers when circuit_open_fallback is called multiple times" do
+      controller_class.circuit_open_fallback(html: -> { :first })
+      controller_class.circuit_open_fallback(html: -> { :second })
+
+      red_light_count = controller_class.rescue_handlers.count { |h| h.first == "Stoplight::Error::RedLight" }
+      expect(red_light_count).to eq(1)
     end
   end
 

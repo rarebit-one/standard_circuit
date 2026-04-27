@@ -30,6 +30,15 @@ module StandardCircuit
           stream: stream
         }
 
+        # Drop existing RedLight handlers on this class before re-appending so
+        # repeated DSL calls (or sub-controllers calling the DSL after a base
+        # controller did) don't accumulate duplicate entries in
+        # `rescue_handlers`. Use the writer (not `reject!`) to avoid mutating
+        # the array a parent class might still share via `class_attribute`.
+        # Each entry's first element is a class-name string
+        # ("Stoplight::Error::RedLight"), not the constant itself.
+        self.rescue_handlers = rescue_handlers.reject { |handler| handler.first == "Stoplight::Error::RedLight" }
+
         rescue_from Stoplight::Error::RedLight do |error|
           handle_circuit_open(error)
         end
