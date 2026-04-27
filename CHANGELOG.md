@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-04-27
+
 ### Fixed
 - `Mailer::Railtie`'s `standard_circuit.action_mailer` initializer now declares `before: "action_mailer.set_configs"`. Without this hint, the on_load callback that defines `standard_circuit_settings=` ran *after* Rails' `set_configs` initializer tried to forward `config.action_mailer.standard_circuit_settings = {...}` to `ActionMailer::Base`, raising `NoMethodError: undefined method 'standard_circuit_settings='` during eager_load. Two consumers previously worked around this by mutating the Initializer's private `@before` field in their `application.rb`; that workaround can now be removed.
 
