@@ -37,6 +37,7 @@ All notable changes to this project will be documented in this file.
 - `StandardCircuit.force_open`, `force_closed`, `reset_force!` + `require "standard_circuit/rspec"` for auto-cleanup.
 
 ### Changed
+- Minimum Ruby version is now `>= 4.0` (was `>= 3.4`). CI tests all four published 4.0.x patches.
 - Removed redundant `defined?(::Sentry::Metrics)` guards in `Runner`, `ControllerSupport`, and `Notifiers::Metrics`. `sentry-ruby` is a hard runtime dependency; the guards were dead code.
 - Tightened `sentry-ruby` lower bound from `>= 5.0` to `>= 5.17`. `Sentry::Metrics` was introduced in 5.17; the previous floor let Bundler resolve a version where the metrics API does not exist.
 
