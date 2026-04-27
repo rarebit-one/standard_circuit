@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- CI and release workflows migrated to the shared `rarebit-one/.github` reusable workflows (`reusable-gem-ci.yml@v1`, `reusable-gem-release.yml@v1`); `.github/workflows/ci.yml` and `release.yml` are now thin shims.
+
 ### Added
 - `standard_circuit.run.completed` event. Per-call complement to the `standard_circuit.circuit.*` lifecycle events introduced in 0.2.0 — fires once per wrapped `StandardCircuit.run` invocation with `circuit:`, `status:` (`:success` / `:failure` / `:circuit_open`), `duration_ms:`, `criticality:`, `error_class:`, and `error_message:`. The right hook for cost-tracking, p95 latency, and per-circuit success-rate dashboards. (`force_closed` runs are intentionally not emitted — that path bypasses the runner.) Routed through the same `EventEmitter` as the lifecycle events, so subscribers get it on `Rails.event` (8.1+) or `ActiveSupport::Notifications` automatically; `duration_ms` is in the payload (not `event.duration`) so backend choice doesn't matter.
 - README section on streaming responses and non-controller contexts: shows the recipe for catching `Stoplight::Error::RedLight` inside a `Live` controller's streaming proc (where `circuit_open_fallback` can't render over an open response), and notes the equivalent pattern for background jobs.
