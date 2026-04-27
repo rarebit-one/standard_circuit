@@ -6,7 +6,7 @@ Wraps the upstream `stoplight` gem with:
 
 - Opinionated default error taxonomy (network errors track; caller/config errors do not)
 - SDK-specific adapter error bundles (Stripe, AWS, Faraday, SMTP)
-- Sentry notifier (warning on GREEN→RED) and metrics notifier (`external.circuit_breaker`, `external.request`)
+- Rails event emission (`standard_circuit.circuit.{opened,closed,degraded,fallback_invoked,registered}`) with built-in Logger, Sentry, and Sentry::Metrics subscribers
 - ActiveStorage S3 adapter with per-bucket circuit keying
 - Generic ActionMailer delivery-method wrapper (supports both instance and symbol `underlying:` forms)
 - Controller concern for standardized 503 responses on `Stoplight::Error::RedLight`
@@ -55,6 +55,43 @@ end
 # anywhere in app code
 StandardCircuit.run(:stripe) do
   Stripe::PaymentIntent.create(amount:, currency:)
+end
+```
+
+## Events
+
+Every circuit lifecycle moment is emitted as a Rails event. On Rails 8.1+ the canonical bus is `Rails.event`; on older Rails versions the gem transparently falls back to `ActiveSupport::Notifications`. Detection happens per-emit, so subscribers do not need to care which backend is live.
+
+| Event | When it fires | Payload |
+|-------|---------------|---------|
+| `standard_circuit.circuit.opened` | RED transition (circuit tripped) | `circuit:, from_color:, to_color:, criticality:, error_class:, error_message:` |
+| `standard_circuit.circuit.closed` | GREEN transition (recovered) | `circuit:, from_color:, to_color:, criticality:` |
+| `standard_circuit.circuit.degraded` | YELLOW transition (half-open probe) | `circuit:, from_color:, to_color:, criticality:` |
+| `standard_circuit.circuit.fallback_invoked` | Runner returned a fallback instead of raising RedLight | `circuit:, reason: (:circuit_open\|:forced_open), criticality:` |
+| `standard_circuit.circuit.registered` | `Config#register` / `register_prefix` was called (see note below) | `circuit:, criticality:, scope: (:name\|:prefix)` |
+
+> **Note on `standard_circuit.circuit.registered`:** subscribers are wired up *after* the `StandardCircuit.configure` block yields, so any `c.register` calls inside that block fire before any subscriber can hear them. This event is reliable only for post-boot, dynamic `register` / `register_prefix` calls — do not rely on it for a boot-time circuit inventory.
+
+Built-in subscribers (Logger / Sentry / Metrics) are registered automatically by the gem's Railtie. Host apps can subscribe to the namespace however they like:
+
+```ruby
+# Rails 8.1+
+class MyAuditSubscriber
+  def emit(event)
+    return unless event[:name].start_with?("standard_circuit.")
+    Rails.logger.info("circuit event: #{event[:name]} #{event[:payload].inspect}")
+  end
+end
+Rails.event.subscribe(MyAuditSubscriber.new)
+
+# Older Rails
+ActiveSupport::Notifications.subscribe(/\Astandard_circuit\./) do |name, _start, _finish, _id, payload|
+  Rails.logger.info("circuit event: #{name} #{payload.inspect}")
+end
+
+# Quick host-supplied callable (auto-wired at boot via the Railtie)
+StandardCircuit.configure do |c|
+  c.add_notifier(->(name, payload) { MyAlerting.notify(name, payload) })
 end
 ```
 

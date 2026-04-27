@@ -1,20 +1,23 @@
 module StandardCircuit
   module Notifiers
+    # Subscribes to standard_circuit.circuit.opened and forwards a warning-level
+    # message to Sentry. Other transitions are ignored — only RED matters for
+    # alerting.
     class Sentry
-      def notify(light, from_color, to_color, error)
-        return unless to_color == Stoplight::Color::RED
+      def call(event_name, payload)
+        return unless event_name == "standard_circuit.circuit.opened"
         return unless defined?(::Sentry) && ::Sentry.respond_to?(:capture_message)
 
-        message = "Circuit breaker opened: #{light.name}"
+        message = "Circuit breaker opened: #{payload[:circuit]}"
         ::Sentry.capture_message(
           message,
           level: :warning,
           extra: {
-            circuit: light.name,
-            from_color: from_color,
-            to_color: to_color,
-            error_class: error&.class&.name,
-            error_message: error&.message
+            circuit: payload[:circuit],
+            from_color: payload[:from_color],
+            to_color: payload[:to_color],
+            error_class: payload[:error_class],
+            error_message: payload[:error_message]
           }.compact
         )
         message

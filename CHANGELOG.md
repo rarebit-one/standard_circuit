@@ -6,6 +6,22 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 - `rails g standard_circuit:install` — Rails install generator. Writes `config/initializers/standard_circuit.rb` with commented-out examples covering the public Config DSL (`register`, `register_prefix`, notifiers, data store, criticality). Idempotent: re-running on an existing initializer skips with a clear message; pass `--force` to overwrite. Pass `--with-health-endpoint` to also write `config/initializers/standard_circuit_health.rb` (which `require`s the opt-in `HealthController`) and print the route line to add to `config/routes.rb`. The generator does not auto-edit `routes.rb` — too invasive — so consumers paste the printed line themselves.
+- Rails event emission for every circuit-breaker lifecycle moment. The `StandardCircuit::Runner` (via a small internal `NotifierBridge` registered with Stoplight) now emits five events as host apps' breakers change state:
+  - `standard_circuit.circuit.opened` — RED transition (the "alert me" event)
+  - `standard_circuit.circuit.closed` — GREEN transition (recovery)
+  - `standard_circuit.circuit.degraded` — YELLOW transition (half-open probe)
+  - `standard_circuit.circuit.fallback_invoked` — Runner returned a fallback rather than raising RedLight
+  - `standard_circuit.circuit.registered` — `Config#register` / `register_prefix` was called
+  Payloads carry `circuit:`, `from_color:`, `to_color:`, `criticality:`, and (when applicable) `error_class:` / `error_message:` / `reason:`.
+- Dual-backend dispatch in `StandardCircuit::EventEmitter`: emits through `Rails.event.notify` on Rails 8.1+ and falls back to `ActiveSupport::Notifications.instrument` on older Rails. Detection happens at call time, so the gem still loads cleanly before Rails has booted and before `railties` is even required.
+- `StandardCircuit::Engine` Railtie that registers the internal subscribers (Logger / Sentry / Metrics) plus any `extra_notifiers` at boot via the `standard_circuit.subscribers` initializer.
+- `StandardCircuit.subscribers` accessor + `Subscribers#setup!` / `#teardown!` for tests and host apps that need to re-register listeners after mutating config.
+
+### Changed
+- **BREAKING.** `StandardCircuit::Notifiers::{Logger,Sentry,Metrics}` are no longer Stoplight-shaped notifiers. Each now exposes `call(event_name, payload)` and is registered as an event subscriber by the gem's Railtie. They are still considered an internal implementation detail — host apps that want their own behaviour should subscribe to the `standard_circuit.*` namespace directly rather than instantiating these classes.
+- **BREAKING.** `Config#add_notifier` now requires the supplied object to respond to `call(event_name, payload)`. Stoplight-shaped 4-arg notifiers from 0.1.x are rejected with `ArgumentError`. Callers should subscribe via `Rails.event.subscribe` / `ActiveSupport::Notifications.subscribe("standard_circuit.*")` for full control, or pass a lambda to `add_notifier` for the simple case.
+- **BREAKING.** Stoplight only sees a single internal `StandardCircuit::NotifierBridge` notifier now; host apps that previously read `StandardCircuit.config.notifiers` to build their own Stoplight light will need to register against the new event namespace instead.
+- `lib/standard_circuit/rspec.rb` now also tears down event subscribers between examples so a spec that subscribes manually doesn't leak listeners into the next.
 
 ## [0.1.2] - 2026-04-27
 

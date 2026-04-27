@@ -29,5 +29,6 @@ RSpec.configure do |config|
     StandardCircuit.reset!
     StandardCircuit.config.reset_registry!
     StandardCircuit.config.data_store = Stoplight::DataStore::Memory.new
+    StandardCircuit.subscribers.teardown!
   end
 end

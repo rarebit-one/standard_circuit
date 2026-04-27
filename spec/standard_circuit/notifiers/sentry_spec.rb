@@ -1,14 +1,21 @@
 require "spec_helper"
 
 RSpec.describe StandardCircuit::Notifiers::Sentry do
-  let(:light) { instance_double(Stoplight::Domain::Light, name: "stripe") }
-  let(:error) { StandardError.new("upstream down") }
+  let(:opened_payload) do
+    {
+      circuit: "stripe",
+      from_color: "green",
+      to_color: "red",
+      error_class: "StandardError",
+      error_message: "upstream down"
+    }
+  end
 
-  describe "#notify" do
-    context "when transitioning GREEN -> RED" do
+  describe "#call" do
+    context "when the event is standard_circuit.circuit.opened" do
       it "captures a warning-level Sentry message with circuit metadata" do
         captured = capture_sentry_message do
-          described_class.new.notify(light, "green", "red", error)
+          described_class.new.call("standard_circuit.circuit.opened", opened_payload)
         end
 
         expect(captured[:message]).to include("stripe")
@@ -23,20 +30,24 @@ RSpec.describe StandardCircuit::Notifiers::Sentry do
       end
     end
 
-    context "when transitioning YELLOW -> RED" do
-      it "still captures (any transition into red counts)" do
+    context "when the event is not standard_circuit.circuit.opened" do
+      it "does not capture on closed transitions" do
         captured = capture_sentry_message do
-          described_class.new.notify(light, "yellow", "red", error)
+          described_class.new.call(
+            "standard_circuit.circuit.closed",
+            circuit: "stripe", from_color: "red", to_color: "green"
+          )
         end
 
-        expect(captured).not_to be_nil
+        expect(captured).to be_nil
       end
-    end
 
-    context "when transitioning to a non-red color" do
-      it "does not capture" do
+      it "does not capture on degraded transitions" do
         captured = capture_sentry_message do
-          described_class.new.notify(light, "red", "green", nil)
+          described_class.new.call(
+            "standard_circuit.circuit.degraded",
+            circuit: "stripe", from_color: "red", to_color: "yellow"
+          )
         end
 
         expect(captured).to be_nil
