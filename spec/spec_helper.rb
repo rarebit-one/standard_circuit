@@ -1,3 +1,9 @@
+require "simplecov"
+SimpleCov.start do
+  enable_coverage :branch
+  add_filter "/spec/"
+end
+
 # Load Rails::Railtie before standard_circuit so the conditional
 # `class Railtie < ::Rails::Railtie` block in delivery_method.rb is
 # evaluated on first require — avoids needing `load` in railtie_spec.rb.

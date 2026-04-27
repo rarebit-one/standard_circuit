@@ -31,6 +31,12 @@ jobs:
       - name: Lint code for consistent style
         run: bundle exec rubocop -f github
 
+      - name: Scan for security vulnerabilities in code
+        run: bundle exec brakeman --no-pager --force
+
+      - name: Scan for vulnerable gems
+        run: bundle exec bundler-audit --update
+
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 15
