@@ -42,7 +42,7 @@ RSpec.describe StandardCircuit::Generators::InstallGenerator, type: :generator d
       expect(content).to include("config.register(:stripe,")
       expect(content).to include("config.register_prefix(:s3,")
       expect(content).to include("StandardCircuit::ErrorTaxonomies::Stripe.tracked")
-      expect(content).to include("config.extra_notifiers")
+      expect(content).to include("config.add_notifier(->(name, payload)")
     end
 
     it "does not create the health initializer" do

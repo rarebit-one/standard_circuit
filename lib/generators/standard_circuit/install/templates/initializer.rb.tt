@@ -70,11 +70,14 @@ StandardCircuit.configure do |config|
   #   criticality: :standard)
 
   # ---------------------------------------------------------------------------
-  # Extra notifiers (legacy)
+  # Extra notifiers
   # ---------------------------------------------------------------------------
-  # The Logger, Sentry, and Metrics notifiers are wired up automatically.
-  # `extra_notifiers` is the legacy escape hatch — new code should subscribe
-  # to `standard_circuit.*` Rails events directly.
+  # Built-in subscribers (Logger / Sentry / Metrics) are wired up automatically.
+  # For most cases, prefer subscribing to the `standard_circuit.*` namespace
+  # directly via `Rails.event.subscribe` (Rails 8.1+) or
+  # `ActiveSupport::Notifications.subscribe`. `add_notifier` is a convenience
+  # for registering a callable that follows the same `call(event_name, payload)`
+  # contract as the built-in subscribers.
 
-  # config.extra_notifiers << ->(payload) { MyTracer.record(payload) }
+  # config.add_notifier(->(name, payload) { MyTracer.record(name, payload) })
 end
