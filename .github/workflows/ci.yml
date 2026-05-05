@@ -12,7 +12,13 @@ permissions:
 
 jobs:
   ci:
-    uses: rarebit-one/.github/.github/workflows/reusable-gem-ci.yml@v1
+    # Pinned to a SHA pre-dating rarebit-one/.github#14 ("drop matrix.ruby
+    # template from job name", b47b0b85). #14 renamed the matrix-job from
+    # `ci / Ruby 4.0.X` to `ci / test-matrix (4.0.X)`. main's branch
+    # protection still requires the old names — pinning restores the
+    # expected names so PRs can merge. Unpin (back to `@v1`) once
+    # protection is updated to use the new names.
+    uses: rarebit-one/.github/.github/workflows/reusable-gem-ci.yml@191a04e06600e2ff1d67a0272c9ebfa0449d868a # v1 pre-#14
     with:
       ruby-versions: '["4.0.0","4.0.1","4.0.2","4.0.3"]'
       extra-lint-commands: |
