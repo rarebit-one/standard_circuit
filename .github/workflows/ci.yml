@@ -18,7 +18,7 @@ jobs:
     # protection still requires the old names — pinning restores the
     # expected names so PRs can merge. Unpin (back to `@v1`) once
     # protection is updated to use the new names.
-    uses: rarebit-one/.github/.github/workflows/reusable-gem-ci.yml@191a04e06600e2ff1d67a0272c9ebfa0449d868a # v1 pre-#14
+    uses: rarebit-one/.github/.github/workflows/reusable-gem-ci.yml@0379757245ef10225dff16036248a614261690c5 # v1 pre-#14
     with:
       ruby-versions: '["4.0.0","4.0.1","4.0.2","4.0.3"]'
       extra-lint-commands: |
