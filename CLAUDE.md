@@ -17,7 +17,7 @@ Then work inside `.worktrees/<name>/` for the rest of the session.
 
 ## Consumers
 
-This gem is consumed by all three web apps in the workspace:
+`standard_circuit` is consumed by all three web apps in the rarebit-one workspace:
 
 - `fundbright-web`
 - `luminality-web`
