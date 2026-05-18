@@ -147,8 +147,6 @@ end
 
 The controller inherits from `ActionController::API` to sidestep app-level filters (authentication, bootstrap redirects, etc.) so probes can call it anonymously.
 
-See [`standard_circuit-design.md`](../standard_circuit-design.md) for the full design.
-
 ## License
 
 MIT
