@@ -34,16 +34,33 @@ module StandardCircuit
     end
 
     attr_accessor :sentry_enabled, :metric_prefix, :data_store, :logger
-    attr_reader :circuits, :prefixes, :extra_notifiers
+    attr_reader :circuits, :prefixes, :extra_notifiers, :sentry_criticality_levels
 
     def initialize
       @sentry_enabled = true
+      @sentry_criticality_levels = nil
       @metric_prefix = "external"
       @data_store = Stoplight::DataStore::Memory.new
       @logger = nil
       @circuits = {}
       @prefixes = {}
       @extra_notifiers = []
+    end
+
+    # Opt in to criticality-aware Sentry reporting for the built-in Sentry
+    # subscriber. Accepts:
+    #
+    #   nil / false  — (default) flat :warning for every circuit, no tags and
+    #                  no fingerprint. The 0.2.x behaviour.
+    #   true         — Notifiers::Sentry::DEFAULT_LEVELS
+    #                  ({ critical: :error, standard: :warning, optional: :info })
+    #   Hash         — DEFAULT_LEVELS merged with the given criticality => level
+    #                  pairs, so a partial map is enough.
+    #
+    # Stored normalized: the reader returns either nil or a frozen, complete
+    # criticality => level Hash.
+    def sentry_criticality_levels=(value)
+      @sentry_criticality_levels = normalize_sentry_criticality_levels(value)
     end
 
     def reset_registry!
@@ -89,6 +106,39 @@ module StandardCircuit
     end
 
     private
+
+    def normalize_sentry_criticality_levels(value)
+      case value
+      when nil, false then nil
+      when true       then Notifiers::Sentry::DEFAULT_LEVELS
+      when Hash       then merge_sentry_criticality_levels(value)
+      else
+        raise ArgumentError,
+          "sentry_criticality_levels must be nil, true, false, or a Hash of " \
+          "criticality => Sentry level; got #{value.class}"
+      end
+    end
+
+    def merge_sentry_criticality_levels(map)
+      normalized = map.to_h do |criticality, level|
+        # Check symbolizability before coercing: a key like 42 would otherwise
+        # raise NoMethodError instead of the ArgumentError this setter promises.
+        criticality = criticality.to_sym if criticality.respond_to?(:to_sym)
+        unless CRITICALITIES.include?(criticality)
+          raise ArgumentError,
+            "invalid criticality #{criticality.inspect} in sentry_criticality_levels; " \
+            "must be one of #{CRITICALITIES.inspect}"
+        end
+        unless level.respond_to?(:to_sym)
+          raise ArgumentError,
+            "invalid Sentry level #{level.inspect} for criticality #{criticality.inspect}; " \
+            "must be a Symbol or String"
+        end
+        [ criticality, level.to_sym ]
+      end
+
+      Notifiers::Sentry::DEFAULT_LEVELS.merge(normalized).freeze
+    end
 
     def spec_for_prefix(name)
       key = name.to_s

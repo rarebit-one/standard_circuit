@@ -58,6 +58,48 @@ StandardCircuit.run(:stripe) do
 end
 ```
 
+## Circuit state storage (`data_store`)
+
+Circuit state (failure counts, colors, locks) lives in a Stoplight data store. StandardCircuit defaults to `Stoplight::DataStore::Memory.new`, which is **per-process**: each Puma worker, Sidekiq/SolidQueue worker, and console gets its own independent view of every circuit.
+
+That is the deliberate default for a Redis-free deployment, and it is usually the right one — a circuit exists to stop *this* process from hammering a dead upstream, and per-process thresholds mean one unlucky worker can't trip the breaker for everyone. But be explicit about what it implies:
+
+- Thresholds are counted per process, so an app with 4 web workers tolerates roughly 4× the configured `threshold` in aggregate before every worker has tripped.
+- `/health` reports the circuit colors of **the process that served the request**, so two consecutive probes can legitimately disagree while a circuit is tripping.
+- `force_open` / `force_closed` and `reset!` affect only the calling process — they are test and console tools, not an operational kill switch.
+
+Point `data_store` at a shared store if you want cross-process state instead:
+
+```ruby
+StandardCircuit.configure do |c|
+  # Default — per-process, no external dependency.
+  c.data_store = Stoplight::DataStore::Memory.new
+
+  # Shared across processes and hosts (requires the redis gem + a Redis server).
+  # c.data_store = Stoplight::DataStore::Redis.new(Redis.new(url: ENV["REDIS_URL"]))
+end
+```
+
+## Sentry reporting
+
+The built-in Sentry subscriber is on by default (`c.sentry_enabled = true`) and reports every circuit-open transition at a flat `:warning`, with the circuit name, colors, and error in `extra`.
+
+Set `sentry_criticality_levels` to derive the level from the circuit's registered `criticality` instead. That also adds `circuit` / `circuit_criticality` tags and a stable `["circuit-open", <circuit>]` fingerprint, so Sentry alert rules can route on criticality (e.g. page on `circuit_criticality:critical`) and group per circuit:
+
+```ruby
+StandardCircuit.configure do |c|
+  # { critical: :error, standard: :warning, optional: :info }
+  c.sentry_criticality_levels = true
+
+  # Or override part of that map — unlisted criticalities keep the default.
+  # c.sentry_criticality_levels = { optional: :debug }
+end
+```
+
+This is **opt-in, not the default**. Both the level and the fingerprint feed Sentry's alerting and issue grouping, so turning it on for existing apps at gem-upgrade time would silently change what pages and re-group open issues. Leaving `sentry_criticality_levels` unset keeps the flat `:warning` shape byte-for-byte.
+
+If you want something else entirely, set `c.sentry_enabled = false` and subscribe to `standard_circuit.circuit.opened` yourself — the payload carries `criticality`.
+
 ## Events
 
 Every circuit lifecycle moment is emitted as a Rails event. On Rails 8.1+ the canonical bus is `Rails.event`; on older Rails versions the gem transparently falls back to `ActiveSupport::Notifications`. Detection happens per-emit, so subscribers do not need to care which backend is live.
@@ -146,6 +188,15 @@ end
 ```
 
 The controller inherits from `ActionController::API` to sidestep app-level filters (authentication, bootstrap redirects, etc.) so probes can call it anonymously.
+
+**If your app also mounts `StandardHealth::Engine` at `/health`, draw the aggregate route first:**
+
+```ruby
+get "/health", to: "standard_circuit/health#show"        # aggregate — FIRST
+mount StandardHealth::Engine => "/health", as: :standard_health
+```
+
+`StandardHealth::Engine` registers sub-paths only (`/alive`, `/ready`, `/diagnostics/env`) — it never serves the aggregate tier itself. An app that mounts the engine and assumes `/health` is covered silently has no aggregate tier at all, with no boot error and no failing route spec to reveal it. The ordering is load-bearing; draw the aggregate route explicitly, first.
 
 ## License
 

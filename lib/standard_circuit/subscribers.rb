@@ -72,7 +72,7 @@ module StandardCircuit
     def internal_subscribers
       config = StandardCircuit.config
       list = [ Notifiers::Logger.new(config.logger) ]
-      list << Notifiers::Sentry.new if config.sentry_enabled
+      list << Notifiers::Sentry.new(levels: config.sentry_criticality_levels) if config.sentry_enabled
       list << Notifiers::Metrics.new(metric_prefix: config.metric_prefix)
       list
     end

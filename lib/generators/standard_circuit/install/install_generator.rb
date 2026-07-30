@@ -67,6 +67,12 @@ module StandardCircuit
         say ""
         say '  get "/health", to: "standard_circuit/health#show"'
         say ""
+        say "If you also mount StandardHealth::Engine at \"/health\", draw the"
+        say "line above BEFORE the mount. That engine serves sub-paths only"
+        say "(/alive, /ready, /diagnostics/env), never the aggregate tier — so"
+        say "an app that mounts it and assumes \"/health\" is covered silently has"
+        say "no aggregate tier, with no boot error to warn you."
+        say ""
         say "The controller returns 503 when the rolled-up circuit health is"
         say ":critical and 200 otherwise — wire it up to your load balancer."
         say "=" * 79

@@ -18,6 +18,26 @@ RSpec.describe StandardCircuit::Subscribers do
       expect(io.string).to include("stripe", "RuntimeError", "boom")
     end
 
+    it "builds the Sentry subscriber in flat mode when no opt-in is configured" do
+      StandardCircuit.config.sentry_enabled = true
+      allow(StandardCircuit::Notifiers::Sentry).to receive(:new).and_call_original
+
+      StandardCircuit.subscribers.setup!
+
+      expect(StandardCircuit::Notifiers::Sentry).to have_received(:new).with(levels: nil)
+    end
+
+    it "passes the normalized criticality map to the Sentry subscriber when opted in" do
+      StandardCircuit.config.sentry_enabled = true
+      StandardCircuit.config.sentry_criticality_levels = true
+      allow(StandardCircuit::Notifiers::Sentry).to receive(:new).and_call_original
+
+      StandardCircuit.subscribers.setup!
+
+      expect(StandardCircuit::Notifiers::Sentry)
+        .to have_received(:new).with(levels: StandardCircuit::Notifiers::Sentry::DEFAULT_LEVELS)
+    end
+
     it "registers extra notifiers that respond to call(name, payload)" do
       received = []
       subscriber = ->(name, payload) { received << [ name, payload ] }

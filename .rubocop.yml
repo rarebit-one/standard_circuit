@@ -22,6 +22,13 @@ RSpec/DescribeClass:
   Exclude:
     - spec/standard_circuit/rspec_support_spec.rb
     - spec/active_storage/service/standard_circuit_s3_service_shim_spec.rb
+    - spec/integration/health_route_boot_spec.rb
+
+# spec/support/health_route_boot_app.rb is not a spec — it's a standalone Rails
+# boot script run as a subprocess, and its stdout IS the assertion surface.
+RSpec/Output:
+  Exclude:
+    - spec/support/health_route_boot_app.rb
 
 Style/FrozenStringLiteralComment:
   Enabled: false
