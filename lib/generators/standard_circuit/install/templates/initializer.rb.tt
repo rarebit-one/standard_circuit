@@ -17,6 +17,17 @@ StandardCircuit.configure do |config|
   # Default: true
   # config.sentry_enabled = true
 
+  # Report circuit-open events at a Sentry level chosen from the circuit's
+  # criticality, and add `circuit` / `circuit_criticality` tags plus a stable
+  # ["circuit-open", <circuit>] fingerprint so Sentry alert rules can route and
+  # group by circuit. Opt-in: leaving this unset keeps the flat :warning
+  # reporting (no tags, no fingerprint) that earlier versions used.
+  #   true  -> { critical: :error, standard: :warning, optional: :info }
+  #   Hash  -> the above, merged with your overrides
+  # Default: nil (flat :warning)
+  # config.sentry_criticality_levels = true
+  # config.sentry_criticality_levels = { optional: :debug }
+
   # Prefix used for emitted metrics (e.g. "<prefix>.circuit_breaker",
   # "<prefix>.request"). Default: "external"
   # config.metric_prefix = "external"
@@ -80,4 +91,14 @@ StandardCircuit.configure do |config|
   # contract as the built-in subscribers.
 
   # config.add_notifier(->(name, payload) { MyTracer.record(name, payload) })
+
+  # ---------------------------------------------------------------------------
+  # Health endpoint (see --with-health-endpoint)
+  # ---------------------------------------------------------------------------
+  # The aggregate route is `get "/health", to: "standard_circuit/health#show"`.
+  # If your app also mounts StandardHealth::Engine at "/health", draw the
+  # aggregate route BEFORE the mount. That engine registers sub-paths only
+  # ("/alive", "/ready", "/diagnostics/env") and never serves the aggregate tier
+  # itself, so an app that mounts it and assumes "/health" is covered silently
+  # has no aggregate tier — no boot error, no failing route spec.
 end

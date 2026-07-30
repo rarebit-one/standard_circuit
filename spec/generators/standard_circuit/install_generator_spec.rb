@@ -45,6 +45,29 @@ RSpec.describe StandardCircuit::Generators::InstallGenerator, type: :generator d
       expect(content).to include("config.add_notifier(->(name, payload)")
     end
 
+    it "templates the opt-in criticality-aware Sentry example" do
+      run_generator
+
+      expect(File.read(initializer_path)).to include("config.sentry_criticality_levels = true")
+    end
+
+    it "documents the data_store default as per-process" do
+      run_generator
+
+      expect(File.read(initializer_path))
+        .to include("Stoplight data store", "in-memory (per-process)")
+    end
+
+    # The ordering is silently load-bearing: mounting StandardHealth::Engine at
+    # "/health" first swallows the aggregate route with no boot error.
+    it "warns that the aggregate /health route must precede the StandardHealth mount" do
+      run_generator
+      content = File.read(initializer_path)
+
+      expect(content).to include("BEFORE the mount")
+      expect(content).to include("StandardHealth::Engine")
+    end
+
     it "does not create the health initializer" do
       run_generator
       expect(File).not_to exist(health_initializer_path)
@@ -95,6 +118,21 @@ RSpec.describe StandardCircuit::Generators::InstallGenerator, type: :generator d
 
       expect(output).to include('get "/health", to: "standard_circuit/health#show"')
       expect(output).to include("StandardCircuit health endpoint installed.")
+    end
+
+    it "prints the route-ordering warning alongside the hint" do
+      output = run_generator([ "--with-health-endpoint" ])
+
+      expect(output).to include("BEFORE the mount")
+      expect(output).to include("StandardHealth::Engine")
+    end
+
+    it "repeats the ordering warning in the health initializer itself" do
+      run_generator([ "--with-health-endpoint" ])
+      content = File.read(health_initializer_path)
+
+      expect(content).to include("ORDERING IS LOAD-BEARING")
+      expect(content).to include("mount StandardHealth::Engine =>")
     end
 
     it "still creates the main initializer" do

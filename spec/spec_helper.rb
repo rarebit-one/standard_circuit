@@ -29,6 +29,12 @@ RSpec.configure do |config|
     StandardCircuit.reset!
     StandardCircuit.config.reset_registry!
     StandardCircuit.config.data_store = Stoplight::DataStore::Memory.new
+    # Notifier config is global and not covered by reset_registry!, so restore
+    # the defaults explicitly — otherwise an example that opts into
+    # criticality-aware Sentry reporting leaks into whatever runs next under
+    # `config.order = :random`.
+    StandardCircuit.config.sentry_enabled = true
+    StandardCircuit.config.sentry_criticality_levels = nil
     StandardCircuit.subscribers.teardown!
   end
 end

@@ -6,6 +6,18 @@
 #
 #   get "/health", to: "standard_circuit/health#show"
 #
+# ORDERING IS LOAD-BEARING: if your app also mounts StandardHealth::Engine at
+# "/health", draw this aggregate route BEFORE the mount —
+#
+#   get "/health", to: "standard_circuit/health#show"        # aggregate — FIRST
+#   mount StandardHealth::Engine => "/health", as: :standard_health
+#
+# StandardHealth::Engine registers sub-paths only ("/alive", "/ready",
+# "/diagnostics/env") — it never serves the aggregate tier itself. So an app
+# that mounts the engine and assumes "/health" is covered has no aggregate tier
+# at all, and nothing says so: no boot error, and no failing route spec unless
+# one already exists. Draw this route explicitly, first.
+#
 # The endpoint renders StandardCircuit.health_report as JSON and returns
 # 503 when the rolled-up status is :critical (so orchestrators pull the
 # instance out of rotation) and 200 otherwise.
