@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-30
+
 ### Added
 - `config.sentry_criticality_levels` — opt in to criticality-aware Sentry reporting for the built-in Sentry subscriber. Accepts `true` (the recommended map `{ critical: :error, standard: :warning, optional: :info }`), a partial Hash merged over that map, or `nil` / `false` for the previous flat behaviour. In criticality-aware mode a circuit-open report also gains `circuit` / `circuit_criticality` tags and a stable `["circuit-open", <circuit>]` fingerprint, so Sentry alert rules can page on `circuit_criticality:critical` and group one issue per breaker. Invalid criticalities and non-symbolizable levels raise `ArgumentError` at configure time rather than failing silently at alert time.
 
