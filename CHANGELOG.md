@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Documentation
+
+- **Consumer list corrected in `CLAUDE.md`: this gem has five consumers, not four.** `sidekick-web` was missing. The same entry also claimed the `workspace-os` → `jumpdrive-web` directory rename "was deferred" and pointed at `~/Workspace/rarebit-one/workspace-os`; that rename completed 2026-07-14 and the old husk is gone, so an agent following the note was looking in a directory that no longer exists. Verified against the canonical matrix in the workspace's `rollout-gem/SKILL.md`, which the new advisory `check-gem-family-drift.sh` now diffs this list against on every sweep.
+
 ## [0.3.0] - 2026-07-30
 
 ### Added
