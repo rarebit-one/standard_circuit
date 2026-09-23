@@ -58,6 +58,22 @@ StandardCircuit.run(:stripe) do
 end
 ```
 
+## Error taxonomies
+
+`tracked_errors` decide what counts toward tripping a circuit; `skipped_errors` are re-raised without counting (and win over `tracked_errors` when a class matches both). `StandardCircuit::ErrorTaxonomies::<Adapter>.tracked` combines `NetworkErrors.defaults` with the adapter's server-side errors for `Stripe`, `Smtp`, `Aws`, and `Faraday`; `StandardCircuit::AdapterErrors::<Adapter>.caller_errors` lists the adapter's caller-side (4xx-style) errors.
+
+When `skipped_errors:` is omitted it defaults to `[]` — except when the tracked list covers the AWS caller errors. AWS 5xx responses are dynamically generated `Aws::Errors::ServiceError` subclasses, so `ErrorTaxonomies::Aws.tracked` has to track `ServiceError` itself, which is also the superclass of `Aws::S3::Errors::AccessDenied` and `NoSuchKey`. So for such circuits `skipped_errors` defaults to `AdapterErrors::Aws.caller_errors` (via `ErrorTaxonomies.default_skipped_for`), and a burst of missing-key lookups or permission errors no longer trips the S3 breaker:
+
+```ruby
+StandardCircuit.configure do |c|
+  # skipped_errors defaults to [Aws::S3::Errors::NoSuchKey, Aws::S3::Errors::AccessDenied]
+  c.register_prefix(:s3, tracked_errors: StandardCircuit::ErrorTaxonomies::Aws.tracked)
+
+  # An explicit skipped_errors — even [] — always wins over the default.
+  # c.register(:s3_strict, tracked_errors: StandardCircuit::ErrorTaxonomies::Aws.tracked, skipped_errors: [])
+end
+```
+
 ## Circuit state storage (`data_store`)
 
 Circuit state (failure counts, colors, locks) lives in a Stoplight data store. StandardCircuit defaults to `Stoplight::DataStore::Memory.new`, which is **per-process**: each Puma worker, Sidekiq/SolidQueue worker, and console gets its own independent view of every circuit.
