@@ -93,4 +93,52 @@ RSpec.describe StandardCircuit::ControllerSupport do
       instance.send(:handle_circuit_open, red_light)
     end
   end
+
+  describe "circuit-open request metric" do
+    let(:instance) { controller_class.new }
+    let(:html_request) { double("req", format: double(json?: false)) }
+
+    before do
+      allow(::Sentry::Metrics).to receive(:count)
+      allow(::Sentry::Metrics).to receive(:distribution)
+      allow(instance).to receive(:request).and_return(html_request)
+      controller_class.circuit_open_fallback(html: -> { @fallback_rendered = true })
+    end
+
+    def expect_single_circuit_open_count
+      expect(::Sentry::Metrics).to have_received(:count)
+        .with("external.request", value: 1, attributes: { service: "ctrl_svc", status: "circuit_open" })
+        .exactly(1).time
+    end
+
+    def red_light_from
+      yield
+      raise "expected Stoplight::Error::RedLight"
+    rescue Stoplight::Error::RedLight => e
+      e
+    end
+
+    it "counts a tripped-circuit rejection exactly once when it reaches the controller" do
+      StandardCircuit.configure { |c| c.register(:ctrl_svc, threshold: 1, tracked_errors: [ Errno::ECONNREFUSED ]) }
+      expect { StandardCircuit.run(:ctrl_svc) { raise Errno::ECONNREFUSED } }.to raise_error(Errno::ECONNREFUSED)
+
+      error = red_light_from { StandardCircuit.run(:ctrl_svc) { :unreachable } }
+
+      expect(instance.rescue_with_handler(error)).to be(error)
+      expect(instance.instance_variable_get(:@fallback_rendered)).to be(true)
+      expect_single_circuit_open_count
+    end
+
+    it "counts a forced-open rejection exactly once when it reaches the controller" do
+      StandardCircuit.configure { |c| c.register(:ctrl_svc) }
+
+      error = StandardCircuit.force_open(:ctrl_svc) do
+        red_light_from { StandardCircuit.run(:ctrl_svc) { :unreachable } }
+      end
+
+      expect(instance.rescue_with_handler(error)).to be(error)
+      expect(instance.instance_variable_get(:@fallback_rendered)).to be(true)
+      expect_single_circuit_open_count
+    end
+  end
 end

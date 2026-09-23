@@ -47,9 +47,10 @@ module StandardCircuit
 
     private
 
-    def handle_circuit_open(error)
+    def handle_circuit_open(_error)
+      # No metric here: Runner already counted this rejection as
+      # `<metric_prefix>.request{status: circuit_open}` before re-raising.
       fallback = self.class._circuit_open_fallback || {}
-      emit_circuit_open_metric(error)
 
       return instance_exec(&fallback[:json]) if request.format.json? && fallback[:json]
       return instance_exec(response, &fallback[:stream]) if streaming_controller? && fallback[:stream]
@@ -60,15 +61,6 @@ module StandardCircuit
 
     def streaming_controller?
       defined?(::ActionController::Live) && self.class.include?(::ActionController::Live)
-    end
-
-    def emit_circuit_open_metric(error)
-      prefix = StandardCircuit.config.metric_prefix
-      ::Sentry::Metrics.count(
-        "#{prefix}.request",
-        value: 1,
-        attributes: { service: error.light_name, status: "circuit_open" }
-      )
     end
   end
 end
