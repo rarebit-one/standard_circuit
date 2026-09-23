@@ -2,10 +2,24 @@
 
 All notable changes to this project will be documented in this file.
 
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
 ## [Unreleased]
 
-### Documentation
+## [0.3.1] - 2026-09-24
 
+Two behaviour changes — both are bug fixes, but both change numbers or breaker behaviour you may be alerting on.
+
+### Fixed
+- **Circuit-open requests were counted twice in `<metric_prefix>.request`.** `Runner` already emits `<metric_prefix>.request{status: circuit_open}` when a call is rejected by a tripped or forced-open circuit; `ControllerSupport#handle_circuit_open` then emitted the same metric again when the `Stoplight::Error::RedLight` reached a controller. The controller-side emission (and the private `emit_circuit_open_metric` helper) is removed; fallback dispatch is unchanged. **Behaviour change:** `circuit_open` request counts for rejections that reach a controller drop by half, back to the true value — dashboards and alert thresholds tuned against the doubled number should be revisited.
+- **S3 caller errors tripped the S3 breaker.** `ErrorTaxonomies::Aws.tracked` includes `Aws::Errors::ServiceError`, which is the superclass of `Aws::S3::Errors::AccessDenied` and `NoSuchKey` as well as of the dynamically generated 5xx errors, so a burst of missing-key lookups or permission errors opened the circuit. New `ErrorTaxonomies.default_skipped_for(tracked)` returns the AWS caller errors whenever the tracked list covers them, and `register` / `register_prefix` now use it as the default `skipped_errors`. **Behaviour change:** AWS circuits registered without `skipped_errors:` no longer count `AccessDenied` / `NoSuchKey` toward the threshold; 5xx (`ServiceUnavailable` etc.) and `Seahorse::Client::NetworkingError` still trip. An explicit `skipped_errors:` — including `[]` — always wins, and circuits for other adapters keep defaulting to `[]`.
+
+### Added
+- Specs for `NetworkErrors` and the Stripe / AWS / Faraday / SMTP `AdapterErrors` modules.
+- README section on error taxonomies and the AWS `skipped_errors` default; the initializer template notes it too.
+
+### Documentation
 - **Consumer list corrected in `CLAUDE.md`: this gem has five consumers, not four.** `sidekick-web` was missing. The same entry also claimed the `workspace-os` → `jumpdrive-web` directory rename "was deferred" and pointed at `~/Workspace/rarebit-one/workspace-os`; that rename completed 2026-07-14 and the old husk is gone, so an agent following the note was looking in a directory that no longer exists. Verified against the canonical matrix in the workspace's `rollout-gem/SKILL.md`, which the new advisory `check-gem-family-drift.sh` now diffs this list against on every sweep.
 
 ## [0.3.0] - 2026-07-30
