@@ -54,7 +54,10 @@ StandardCircuit.configure do |config|
   #   tracked_errors  — error classes that count toward the threshold
   #                     (default: StandardCircuit::NetworkErrors.defaults)
   #   skipped_errors  — error classes that bypass the circuit (re-raised
-  #                     without counting — typically caller/validation errors)
+  #                     without counting — typically caller/validation errors;
+  #                     default: [], or the AWS caller errors (NoSuchKey,
+  #                     AccessDenied) when tracked_errors covers them — see
+  #                     StandardCircuit::ErrorTaxonomies.default_skipped_for)
   #   criticality     — :critical | :standard | :optional
   #                     (affects health rollup; default: :standard)
 
@@ -75,6 +78,8 @@ StandardCircuit.configure do |config|
   # Use `register_prefix` to dynamically name circuits matching a pattern.
   # The first matching prefix wins; the circuit name is "<prefix>_<suffix>".
 
+  # AWS caller errors (NoSuchKey, AccessDenied) are skipped by default here,
+  # so missing keys and permission errors don't trip the S3 breaker.
   # config.register_prefix(:s3,
   #   threshold: 10,
   #   tracked_errors: StandardCircuit::ErrorTaxonomies::Aws.tracked,

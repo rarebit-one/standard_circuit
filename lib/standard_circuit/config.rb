@@ -22,12 +22,17 @@ module StandardCircuit
             "invalid criticality #{criticality.inspect}; must be one of #{CRITICALITIES.inspect}"
         end
 
+        tracked_errors = opts.fetch(:tracked_errors, NetworkErrors.defaults)
+
         new(
           threshold: opts.fetch(:threshold, DEFAULT_THRESHOLD),
           cool_off_time: opts.fetch(:cool_off_time, DEFAULT_COOL_OFF),
           window_size: opts.fetch(:window_size, DEFAULT_WINDOW),
-          tracked_errors: opts.fetch(:tracked_errors, NetworkErrors.defaults),
-          skipped_errors: opts.fetch(:skipped_errors, []),
+          tracked_errors: tracked_errors,
+          # An explicit `skipped_errors:` (including `[]`) always wins; the
+          # default only kicks in when the key is absent. See
+          # ErrorTaxonomies.default_skipped_for for why AWS needs one.
+          skipped_errors: opts.fetch(:skipped_errors) { ErrorTaxonomies.default_skipped_for(tracked_errors) },
           criticality: criticality
         )
       end
