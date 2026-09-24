@@ -14,5 +14,5 @@ group :test do
   gem "stripe", require: false
   gem "faraday", require: false
   gem "postmark", require: false
-  gem "activestorage", ">= 8.0", require: false
+  gem "activestorage", ">= 8.1", require: false
 end

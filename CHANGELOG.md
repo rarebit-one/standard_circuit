@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Requires Rails 8.1** (`railties`, `actionmailer`, `actionpack` `>= 8.1`,
+  was `>= 8.0`). Every consumer app runs 8.1; 8.0 was never exercised in CI.
+
 ## [0.5.0] - 2026-09-24
 
 **Breaking.** Removes everything 0.4 deprecated. Behaviour of everything that remains is unchanged, including 0.4.2's `mailer_retry` (exhaustion reports, then re-raises so the job dead-letters).

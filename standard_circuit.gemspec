@@ -24,13 +24,13 @@ Gem::Specification.new do |spec|
   spec.add_dependency "stoplight", "~> 5.8"
   spec.add_dependency "concurrent-ruby", "~> 1.3"
   spec.add_dependency "sentry-ruby", ">= 5.17"
-  spec.add_dependency "railties", ">= 8.0"
+  spec.add_dependency "railties", ">= 8.1"
   # `require "standard_circuit"` loads the mailer delivery method + Railtie
   # (action_mailer, which brings activejob for `mailer_retry`) and
   # ControllerSupport (action_controller) unconditionally, so both are real
   # runtime dependencies rather than optional integrations.
-  spec.add_dependency "actionmailer", ">= 8.0"
-  spec.add_dependency "actionpack", ">= 8.0"
+  spec.add_dependency "actionmailer", ">= 8.1"
+  spec.add_dependency "actionpack", ">= 8.1"
   # Deliberately NOT declared, because they are only ever loaded by the thing
   # that needs them and so are always present when they're loaded:
   #   activestorage — the StandardCircuitS3 service file is required only by
