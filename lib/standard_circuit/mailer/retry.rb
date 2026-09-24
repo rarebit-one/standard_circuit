@@ -35,19 +35,73 @@ module StandardCircuit
       EXHAUSTED_MESSAGE = "Email delivery failed: mail circuit breaker retries exhausted".freeze
       FINGERPRINT = "standard_circuit-mailer-retries-exhausted".freeze
 
+      # Prepended onto ActiveJob::Base's singleton class only when the
+      # :active_job hook fired mid-way through MailDeliveryJob's own
+      # definition. MailDeliveryJob is complete by the time anything
+      # subclasses it, and installing on it before the subclass body runs keeps
+      # the handler's precedence the same as for any other load order.
+      module InstallBeforeSubclassing
+        def inherited(subclass)
+          StandardCircuit::Mailer::Retry.install_configured if name == "ActionMailer::MailDeliveryJob"
+          super
+        end
+      end
+
       class << self
-        # Defers installation until ActiveJob::Base has loaded (immediately if
-        # it already has), so enabling this from an early initializer doesn't
-        # force ActiveJob to load before its own configuration is applied. The
-        # hook reads the live config when it runs; it is registered once.
+        # Defers installation until MailDeliveryJob can be referenced safely,
+        # so enabling this from an early initializer doesn't force ActiveJob
+        # or ActionMailer to load before their own configuration is applied.
+        # The hooks read the live config when they run; they are registered
+        # once.
+        #
+        # `ActionMailer::MailDeliveryJob` can't simply be referenced from an
+        # `on_load(:active_job)` hook: when `class MailDeliveryJob <
+        # ActiveJob::Base` is itself what loads ActiveJob::Base (a mailer or
+        # `deliver_later` touched first in a lazily-loaded process), the hook
+        # fires while that class is still being autoloaded and the reference
+        # raises NameError. So each trigger checks first, and together they
+        # cover every load order:
+        #
+        # * :active_job — installs straight away when ActiveJob::Base loads
+        #   ahead of MailDeliveryJob (eager load, or any ApplicationJob first).
+        # * :action_mailer — ActionMailer::Base references MailDeliveryJob, so
+        #   by the time this runs the class is complete. Every delivery goes
+        #   through a mailer class, so this runs before the first delivery can
+        #   raise, including in a worker that deserialized the job first
+        #   (rescue handlers are read when an error is rescued, not at enqueue).
+        # * the first subclass of MailDeliveryJob — covers a custom
+        #   `delivery_job` loaded ahead of any mailer, which would otherwise
+        #   take a copy of the parent's rescue handlers without this one.
         def install_on_load
           return if @on_load_registered
 
           @on_load_registered = true
           ::ActiveSupport.on_load(:active_job) do
-            options = StandardCircuit.config.mailer_retry
-            StandardCircuit::Mailer::Retry.install(::ActionMailer::MailDeliveryJob, options) if options
+            if StandardCircuit::Mailer::Retry.mail_delivery_job_referenceable?
+              StandardCircuit::Mailer::Retry.install_configured
+            else
+              singleton_class.prepend(StandardCircuit::Mailer::Retry::InstallBeforeSubclassing)
+            end
           end
+          ::ActiveSupport.on_load(:action_mailer) { StandardCircuit::Mailer::Retry.install_configured }
+        end
+
+        # Installs on ActionMailer::MailDeliveryJob with the configured options
+        # when mailer_retry is on and the class is safe to reference. Returns
+        # true when the handler is in place afterwards.
+        def install_configured
+          options = StandardCircuit.config.mailer_retry
+          return false unless options && mail_delivery_job_referenceable?
+
+          install(::ActionMailer::MailDeliveryJob, options)
+          true
+        end
+
+        # False only while MailDeliveryJob is mid-autoload on this thread (see
+        # install_on_load): Ruby reports an in-progress autoload as undefined.
+        # When the autoload is merely pending, referencing it loads it normally.
+        def mail_delivery_job_referenceable?
+          defined?(::ActionMailer) && ::ActionMailer.const_defined?(:MailDeliveryJob, false)
         end
 
         # Adds the retry_on to +job_class+ unless a CircuitOpenError handler is
