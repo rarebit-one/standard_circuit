@@ -124,7 +124,7 @@ Defaults live in `Config`:
 - **stoplight** ~> 5.8 (circuit breaker primitives)
 - **concurrent-ruby** ~> 1.3 (`Concurrent::Map` for the light cache)
 - **sentry-ruby** >= 5.17 (notifier + metrics)
-- **railties** >= 8.0 (Railtie hooks for the mailer)
+- **railties** >= 8.1 (Railtie hooks for the mailer)
 
 Optional, only loaded when host apps require the relevant adapter:
 - **activestorage**, **actionmailer**, **actionpack**
