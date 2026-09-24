@@ -94,6 +94,19 @@ module StandardCircuit
       spec
     end
 
+    # Register a circuit from a named preset (see StandardCircuit::Presets):
+    #
+    #   c.register_preset(:postmark)                  # c.register(:postmark, ...)
+    #   c.register_preset(:s3)                        # c.register_prefix(:s3, ...)
+    #   c.register_preset(:postmark, name: :mail, threshold: 5)
+    #
+    # +name:+ overrides the circuit name (or prefix); any other keyword is a
+    # `register` option that wins over the preset's value.
+    def register_preset(preset, name: preset, **overrides)
+      scope, opts = Presets.resolve(preset, **overrides)
+      scope == :prefix ? register_prefix(name, **opts) : register(name, **opts)
+    end
+
     # Register a host-supplied subscriber. Subscribers must respond to
     # `call(event_name, payload)` — Stoplight-shaped 4-arg notifiers from the
     # 0.1.x API are no longer accepted as extras (Logger / Sentry / Metrics

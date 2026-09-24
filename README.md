@@ -5,7 +5,7 @@ Circuit breaker primitives for Rails apps, built on [stoplight](https://github.c
 Wraps the upstream `stoplight` gem with:
 
 - Opinionated default error taxonomy (network errors track; caller/config errors do not)
-- SDK-specific adapter error bundles (Stripe, AWS, Faraday, SMTP)
+- SDK-specific adapter error bundles (Stripe, AWS, Faraday, SMTP, Postmark) and circuit presets (`:postmark`, `:s3`)
 - Rails event emission (`standard_circuit.circuit.{opened,closed,degraded,fallback_invoked,registered}`) with built-in Logger, Sentry, and Sentry::Metrics subscribers
 - ActiveStorage S3 adapter with per-bucket circuit keying
 - Generic ActionMailer delivery-method wrapper (supports both instance and symbol `underlying:` forms)
@@ -60,9 +60,9 @@ end
 
 ## Error taxonomies
 
-`tracked_errors` decide what counts toward tripping a circuit; `skipped_errors` are re-raised without counting (and win over `tracked_errors` when a class matches both). `StandardCircuit::ErrorTaxonomies::<Adapter>.tracked` combines `NetworkErrors.defaults` with the adapter's server-side errors for `Stripe`, `Smtp`, `Aws`, and `Faraday`; `StandardCircuit::AdapterErrors::<Adapter>.caller_errors` lists the adapter's caller-side (4xx-style) errors.
+`tracked_errors` decide what counts toward tripping a circuit; `skipped_errors` are re-raised without counting (and win over `tracked_errors` when a class matches both). `StandardCircuit::ErrorTaxonomies::<Adapter>.tracked` combines `NetworkErrors.defaults` with the adapter's server-side errors for `Stripe`, `Smtp`, `Aws`, `Faraday`, and `Postmark`; `StandardCircuit::AdapterErrors::<Adapter>.caller_errors` lists the adapter's caller-side (4xx-style) errors.
 
-When `skipped_errors:` is omitted it defaults to `[]` — except when the tracked list covers the AWS caller errors. AWS 5xx responses are dynamically generated `Aws::Errors::ServiceError` subclasses, so `ErrorTaxonomies::Aws.tracked` has to track `ServiceError` itself, which is also the superclass of `Aws::S3::Errors::AccessDenied` and `NoSuchKey`. So for such circuits `skipped_errors` defaults to `AdapterErrors::Aws.caller_errors` (via `ErrorTaxonomies.default_skipped_for`), and a burst of missing-key lookups or permission errors no longer trips the S3 breaker:
+When `skipped_errors:` is omitted it defaults to `[]` — except when the tracked list covers the AWS or Postmark caller errors. (Postmark's `ApiInputError` and `InvalidApiKeyError` subclass `Postmark::HttpServerError`, so a circuit tracking `ErrorTaxonomies::Postmark.tracked` without `skipped_errors:` defaults to skipping them.) AWS 5xx responses are dynamically generated `Aws::Errors::ServiceError` subclasses, so `ErrorTaxonomies::Aws.tracked` has to track `ServiceError` itself, which is also the superclass of `Aws::S3::Errors::AccessDenied` and `NoSuchKey`. So for such circuits `skipped_errors` defaults to `AdapterErrors::Aws.caller_errors` (via `ErrorTaxonomies.default_skipped_for`), and a burst of missing-key lookups or permission errors no longer trips the S3 breaker:
 
 ```ruby
 StandardCircuit.configure do |c|
@@ -73,6 +73,42 @@ StandardCircuit.configure do |c|
   # c.register(:s3_strict, tracked_errors: StandardCircuit::ErrorTaxonomies::Aws.tracked, skipped_errors: [])
 end
 ```
+
+## Presets
+
+Some integrations were registered identically, line for line, in several apps. `c.register_preset` registers them with the shared settings; any `register` option you pass alongside wins, and `name:` renames the circuit.
+
+| Preset | Registers | Settings |
+|--------|-----------|----------|
+| `:postmark` | `register(:postmark, ...)` | threshold 3, cool-off 60s, `:standard`, `ErrorTaxonomies::Postmark.tracked`, skips `AdapterErrors::Postmark.caller_errors` |
+| `:s3` | `register_prefix(:s3, ...)` — matches the `s3_<bucket>` circuits `StandardCircuitS3` opens | threshold 3, cool-off 30s, `:standard`, `ErrorTaxonomies::Aws.tracked`, skips `NoSuchKey` / `AccessDenied` |
+
+Each preset requires its SDK (`postmark`, `aws-sdk-s3`) before building the error lists and raises `ArgumentError` if the gem is missing. That matters for `gem "aws-sdk-s3", require: false`: `ErrorTaxonomies::Aws.tracked` returns only network errors when the SDK hasn't been loaded yet at configure time, which quietly leaves S3 5xx responses untracked.
+
+Replace your host code with:
+
+```ruby
+# Before — config/initializers/standard_circuit.rb
+c.register(:postmark,
+  threshold: 3,
+  cool_off_time: 60,
+  criticality: :standard,
+  tracked_errors: StandardCircuit::NetworkErrors.defaults +
+                  [ Postmark::HttpServerError, Postmark::TimeoutError ],
+  skipped_errors: [ Postmark::ApiInputError, Postmark::InvalidApiKeyError ])
+
+c.register_prefix(:s3,
+  threshold: 3,
+  cool_off_time: 30,
+  criticality: :standard,
+  tracked_errors: StandardCircuit::ErrorTaxonomies::Aws.tracked)
+
+# After
+c.register_preset(:postmark)
+c.register_preset(:s3)
+```
+
+There is deliberately no `:stripe` preset — the apps that wrap Stripe disagree on threshold, criticality, and skips, so `ErrorTaxonomies::Stripe.tracked` stays the shared piece.
 
 ## Circuit state storage (`data_store`)
 
