@@ -27,10 +27,8 @@ bundle add standard_circuit
 rails g standard_circuit:install
 ```
 
-Pass `--with-health-endpoint` to also generate
-`config/initializers/standard_circuit_health.rb` (which requires the opt-in
-health controller); the generator prints the matching route line for you to
-add to `config/routes.rb`.
+Pass `--with-health-endpoint` to also print the route line for the health
+endpoint, for you to add to `config/routes.rb`.
 
 The generator is idempotent — re-running skips an existing initializer
 unless you pass `--force`.
@@ -282,18 +280,27 @@ Same pattern applies in background jobs (where `circuit_open_fallback` doesn't h
 
 ## Health endpoint
 
-StandardCircuit ships an opt-in controller that renders `StandardCircuit.health_report` as JSON. It returns 503 when the rolled-up status is `:critical` (so orchestrators pull the instance out of rotation) and 200 otherwise.
+StandardCircuit ships a controller that renders `StandardCircuit.health_report` as JSON. It returns 503 when the rolled-up status is `:critical` (so orchestrators pull the instance out of rotation) and 200 otherwise.
 
-It's opt-in — not auto-required — so apps that don't want a health route don't pay for it.
+The controller lives in the engine's `app/controllers`, so it is autoloaded. The route is the only opt-in, and apps that don't draw it never load the controller.
 
 ```ruby
 # config/routes.rb
-require "standard_circuit/health_controller"
-
 Rails.application.routes.draw do
   get "/health", to: "standard_circuit/health#show"
 end
 ```
+
+Replace your host code with:
+
+```ruby
+# Before — top of config/routes.rb (or config/initializers/standard_circuit_health.rb)
+require "standard_circuit/health_controller"
+
+# After — delete the line (and the initializer, if that's all it contained).
+```
+
+The old `require` still works in 0.4 but emits a deprecation through `Rails.application.deprecators[:standard_circuit]`. It will be removed in 0.5.
 
 The controller inherits from `ActionController::API` to sidestep app-level filters (authentication, bootstrap redirects, etc.) so probes can call it anonymously.
 

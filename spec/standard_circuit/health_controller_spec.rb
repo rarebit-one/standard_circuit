@@ -1,5 +1,7 @@
 require "spec_helper"
-require "standard_circuit/health_controller"
+require "action_controller"
+# Outside a booted app nothing autoloads app/controllers, so load it directly.
+require_relative "../../app/controllers/standard_circuit/health_controller"
 
 RSpec.describe StandardCircuit::HealthController do
   let(:instance) { described_class.new }
@@ -52,6 +54,17 @@ RSpec.describe StandardCircuit::HealthController do
   describe "inheritance" do
     it "inherits from ActionController::API so it sidesteps app filters" do
       expect(described_class.ancestors).to include(::ActionController::API)
+    end
+  end
+
+  describe "legacy require path" do
+    it "still loads via require \"standard_circuit/health_controller\" and warns it is no longer needed" do
+      allow(StandardCircuit.deprecator).to receive(:warn)
+
+      load "standard_circuit/health_controller.rb"
+
+      expect(StandardCircuit.deprecator).to have_received(:warn).with(/no longer needed.*autoloads/)
+      expect(StandardCircuit.const_defined?(:HealthController, false)).to be(true)
     end
   end
 end

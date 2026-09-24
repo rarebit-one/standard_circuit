@@ -3,6 +3,7 @@ require "concurrent"
 require "sentry-ruby"
 
 require "standard_circuit/version"
+require "standard_circuit/deprecator"
 require "standard_circuit/network_errors"
 require "standard_circuit/adapter_errors/stripe"
 require "standard_circuit/adapter_errors/aws"

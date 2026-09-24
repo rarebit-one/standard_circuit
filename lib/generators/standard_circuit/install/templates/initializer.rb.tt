@@ -101,6 +101,7 @@ StandardCircuit.configure do |config|
   # Health endpoint (see --with-health-endpoint)
   # ---------------------------------------------------------------------------
   # The aggregate route is `get "/health", to: "standard_circuit/health#show"`.
+  # The controller is autoloaded by the engine — no require needed.
   # If your app also mounts StandardHealth::Engine at "/health", draw the
   # aggregate route BEFORE the mount. That engine registers sub-paths only
   # ("/alive", "/ready", "/diagnostics/env") and never serves the aggregate tier

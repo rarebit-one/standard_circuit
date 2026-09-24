@@ -23,11 +23,18 @@ module StandardCircuit
     #   spec/integration/health_route_boot_spec.rb, which fails if this ever
     #   regresses).
     #
+    # `StandardCircuit::HealthController` lives in the engine's app/controllers
+    # and is autoloaded (and eager-loaded in production) by the host.
+    #
     # One real consequence: `StandardCircuit::HealthController` now picks up the
     # engine's (empty) url_helpers instead of the application's, so app path
     # helpers inside it — or inside a host subclass of it — need a `main_app.`
     # prefix. The controller only renders JSON, so nothing in-gem is affected.
     isolate_namespace StandardCircuit
+
+    initializer "standard_circuit.deprecator" do |app|
+      app.deprecators[:standard_circuit] = StandardCircuit.deprecator if app.respond_to?(:deprecators)
+    end
 
     initializer "standard_circuit.subscribers", after: :load_config_initializers do
       StandardCircuit.subscribers.setup!
