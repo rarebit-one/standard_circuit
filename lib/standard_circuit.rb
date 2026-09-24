@@ -72,11 +72,21 @@ module StandardCircuit
       runner.reset!
     end
 
+    # @deprecated Use +health_report[:circuits]+. Removed in 0.5.
     def health_snapshot
+      deprecator.warn(
+        "StandardCircuit.health_snapshot is deprecated and will be removed in 0.5; " \
+        "use StandardCircuit.health_report[:circuits] (one atomic read of status + circuits)."
+      )
       runner.health_snapshot
     end
 
+    # @deprecated Use +health_report[:status]+. Removed in 0.5.
     def health_overall(snapshot = nil)
+      deprecator.warn(
+        "StandardCircuit.health_overall is deprecated and will be removed in 0.5; " \
+        "use StandardCircuit.health_report[:status] (one atomic read of status + circuits)."
+      )
       runner.health_overall(snapshot)
     end
 

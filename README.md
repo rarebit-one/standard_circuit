@@ -336,6 +336,32 @@ mount StandardHealth::Engine => "/health", as: :standard_health
 
 `StandardHealth::Engine` registers sub-paths only (`/alive`, `/ready`, `/diagnostics/env`) — it never serves the aggregate tier itself. An app that mounts the engine and assumes `/health` is covered silently has no aggregate tier at all, with no boot error and no failing route spec to reveal it. The ordering is load-bearing; draw the aggregate route explicitly, first.
 
+## Test API
+
+These are supported public API for host test suites, not internals:
+
+| Method | What it does |
+|--------|--------------|
+| `StandardCircuit.force_open(name) { ... }` | Treat `name` as open for the block (or until `reset_force!` without a block): `run` raises `Stoplight::Error::RedLight`, or returns the fallback. Emits the same `run.completed` / `fallback_invoked` events as a real open circuit. |
+| `StandardCircuit.force_closed(name) { ... }` | Bypass the circuit for the block — `run` just yields. No events. |
+| `StandardCircuit.reset_force!` | Clear every forced state. |
+| `StandardCircuit.reset!` | Clear the light cache and forced states, and swap in a fresh `Memory` data store (left alone when the store is Redis). |
+| `require "standard_circuit/rspec"` | Adds a `before(:each)` that runs `reset!` and tears down subscribers. Circuit registrations are kept. |
+
+All of these are **process-local**. They are test and console tools, not an operational kill switch (see `data_store` above).
+
+## Deprecations
+
+0.4 deprecates the following. Each still works and warns through `Rails.application.deprecators[:standard_circuit]`, so your app's `config.active_support.deprecation` setting applies. They will be removed in 0.5.
+
+| Deprecated | Use instead |
+|------------|-------------|
+| `require "standard_circuit/health_controller"` | nothing — the controller is autoloaded |
+| `StandardCircuit.health_snapshot` | `StandardCircuit.health_report[:circuits]` |
+| `StandardCircuit.health_overall` | `StandardCircuit.health_report[:status]` |
+| `StandardCircuit::AdapterErrors::Faraday.caller_errors` | drop it — `Faraday::ClientError` is never tracked, so skipping it is a no-op |
+| `StandardCircuit::ActiveStorage::S3Service` | `ActiveStorage::Service::StandardCircuitS3Service` / `service: StandardCircuitS3` |
+
 ## License
 
 MIT

@@ -13,6 +13,10 @@ require "action_mailer"
 require "rails/railtie"
 require "standard_circuit"
 
+# Any deprecated API a spec reaches without stubbing the warning is a bug in
+# the spec (or an in-gem caller that should have moved off it).
+StandardCircuit.deprecator.behavior = :raise
+
 RSpec.configure do |config|
   config.expect_with :rspec do |c|
     c.syntax = :expect
