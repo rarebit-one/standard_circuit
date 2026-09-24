@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-24
+
+A developer-experience release that moves code copy-pasted across the five consumer apps into the gem. Everything is additive: behaviour is unchanged unless you opt in, and deprecated APIs keep working until 0.5.
+
+### Added
+- **`ErrorTaxonomies::Postmark` / `AdapterErrors::Postmark`.** `server_errors` is `[Postmark::HttpServerError, Postmark::TimeoutError]` and `caller_errors` is `[Postmark::ApiInputError, Postmark::InvalidApiKeyError]`. Both return `[]` when the postmark gem isn't loaded. `ErrorTaxonomies.default_skipped_for` now also covers Postmark, because `ApiInputError` and `InvalidApiKeyError` subclass the tracked `HttpServerError`. A circuit that tracks `HttpServerError` and has no `skipped_errors:` now skips them by default, the same way AWS caller errors are skipped since 0.3.1. None of the consumers is affected: all three Postmark circuits pass `skipped_errors:` explicitly.
+- **`Config#register_preset(:postmark | :s3, name:, **overrides)`.** It replaces the identical `:postmark` registrations in jumpdrive-web, fundbright-web and luminality-web, and the identical `register_prefix(:s3, ...)` in luminality-web, sidekick-web and nutripod-web. Each preset requires its SDK first (`postmark`, `aws-sdk-s3`) and raises `ArgumentError` if the SDK is missing. This matters when `aws-sdk-s3` is declared `require: false`: in that case `ErrorTaxonomies::Aws.tracked` evaluated at configure time contains only network errors. There is deliberately no `:stripe` preset, because the apps' Stripe registrations differ.
+- **Opt-in `config.mailer_retry`** (`true`, or `{ wait:, attempts:, jitter: }` over the defaults `90 / 5 / 0.15`; off by default). It installs `retry_on StandardCircuit::Mailer::CircuitOpenError` on `ActionMailer::MailDeliveryJob`. The install is idempotent and reload-safe, and it stands down if a `CircuitOpenError` handler is already present. On exhaustion it writes an error log line, sends a Sentry `:error` event and emits a new `standard_circuit.mailer.retries_exhausted` event, all carrying recipient domains only. It replaces `config/initializers/mail_delivery_retry.rb` in jumpdrive-web, sidekick-web and nutripod-web (their provider-specific retries and discards stay in the apps), and the `CircuitOpenError` `retry_on` in fundbright-web's `ApplicationMailDeliveryJob`. The Sentry fingerprint is new, so the first exhaustion after switching opens a new issue.
+- `StandardCircuit.deprecator`, registered as `Rails.application.deprecators[:standard_circuit]`.
+- `Config#add_notifier(notifier, key:)`: an optional `key:` for registering several instances of one notifier class (see Changed).
+- README sections: presets, mail delivery and `mailer_retry`, calling `configure` more than once, supported test API (`force_open`, `force_closed`, `reset_force!`, `reset!`, `standard_circuit/rspec`), and deprecations. Each feature has a "replace your host code with" snippet.
+
+### Changed
+- **`StandardCircuit::HealthController` is autoloaded by the engine.** It moved to `app/controllers/standard_circuit/health_controller.rb`, so drawing `get "/health", to: "standard_circuit/health#show"` is all a host needs. The boot probe spec now covers autoload, eager load and both legacy `require` placements. The install generator's `--with-health-endpoint` no longer writes `config/initializers/standard_circuit_health.rb`, which only ever contained the require; it prints the route hint.
+- **Repeated `configure` calls no longer stack notifiers.** Every consumer calls `configure` from `to_prepare`, which re-runs on every code reload. `add_notifier` now replaces an existing entry with the same identity in place: the same explicit `key:`, otherwise the same class name, or for procs and methods the same source location. The newest instance wins. `extra_notifiers` is deliberately not reset on each `configure`, because apps split configuration across several calls and a reset would silently drop notifiers added earlier.
+- **gemspec declares `actionmailer` and `actionpack` (`>= 8.0`).** `require "standard_circuit"` has always loaded both, but only `railties` was declared, and railties doesn't pull in actionmailer. `activestorage` stays undeclared because the S3 service is only ever loaded by ActiveStorage's own configurator. The SDKs stay optional. The gem package now includes `app/**`.
+
+### Deprecated
+Each item below still works and warns through `StandardCircuit.deprecator`. All are removed in 0.5.
+- `require "standard_circuit/health_controller"`: remove it, the controller is autoloaded. Carried in `config/routes.rb` by jumpdrive-web, fundbright-web and nutripod-web.
+- `StandardCircuit.health_snapshot` and `StandardCircuit.health_overall`: use `StandardCircuit.health_report[:circuits]` / `[:status]`. No consumer calls them.
+- `StandardCircuit::AdapterErrors::Faraday.caller_errors`: `Faraday::ClientError` is never tracked, so skipping it is a no-op. No consumer calls it. (`Aws.caller_errors` is kept because `default_skipped_for` uses it.)
+- `StandardCircuit::ActiveStorage::S3Service`: use `ActiveStorage::Service::StandardCircuitS3Service`, or `service: StandardCircuitS3` in storage.yml. No consumer references it.
+
 ## [0.3.1] - 2026-09-24
 
 Two behaviour changes — both are bug fixes, but both change numbers or breaker behaviour you may be alerting on.

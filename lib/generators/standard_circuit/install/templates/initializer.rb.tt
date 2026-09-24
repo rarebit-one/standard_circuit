@@ -37,6 +37,14 @@ StandardCircuit.configure do |config|
   # Default: nil
   # config.logger = Rails.logger
 
+  # Retry ActionMailer::MailDeliveryJob on
+  # StandardCircuit::Mailer::CircuitOpenError while the mail circuit is open.
+  # Keep `wait` longer than the mail circuit's cool_off_time. On exhaustion:
+  # error log + Sentry :error (recipient domains only).
+  #   true -> { wait: 90, attempts: 5, jitter: 0.15 }
+  # Default: nil (off)
+  # config.mailer_retry = true
+
   # Stoplight data store. Default: in-memory (per-process). Use a shared
   # store (e.g. Stoplight::DataStore::Redis) when you want circuit state
   # shared across processes/hosts.
@@ -55,8 +63,8 @@ StandardCircuit.configure do |config|
   #                     (default: StandardCircuit::NetworkErrors.defaults)
   #   skipped_errors  — error classes that bypass the circuit (re-raised
   #                     without counting — typically caller/validation errors;
-  #                     default: [], or the AWS caller errors (NoSuchKey,
-  #                     AccessDenied) when tracked_errors covers them — see
+  #                     default: [], or the AWS / Postmark caller errors
+  #                     when tracked_errors covers them — see
   #                     StandardCircuit::ErrorTaxonomies.default_skipped_for)
   #   criticality     — :critical | :standard | :optional
   #                     (affects health rollup; default: :standard)
@@ -71,6 +79,12 @@ StandardCircuit.configure do |config|
   # config.register(:smtp,
   #   tracked_errors: StandardCircuit::ErrorTaxonomies::Smtp.tracked,
   #   criticality: :standard)
+
+  # Presets for integrations with shared settings (any option passed wins):
+  #   :postmark — register(:postmark, ...) with the Postmark taxonomy + skips
+  #   :s3       — register_prefix(:s3, ...) for `service: StandardCircuitS3`
+  # config.register_preset(:postmark)
+  # config.register_preset(:s3)
 
   # ---------------------------------------------------------------------------
   # Prefix registration
@@ -96,6 +110,8 @@ StandardCircuit.configure do |config|
   # contract as the built-in subscribers.
 
   # config.add_notifier(->(name, payload) { MyTracer.record(name, payload) })
+  # Idempotent across repeated configure calls (e.g. from to_prepare):
+  # re-adding the same notifier replaces it rather than stacking a duplicate.
 
   # ---------------------------------------------------------------------------
   # Health endpoint (see --with-health-endpoint)
