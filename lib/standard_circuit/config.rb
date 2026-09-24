@@ -5,6 +5,10 @@ module StandardCircuit
     DEFAULT_WINDOW = 60
     DEFAULT_CRITICALITY = :standard
     CRITICALITIES = [ :critical, :standard, :optional ].freeze
+    # 90s > the :postmark preset's 60s cool-off, so a retry lands after the
+    # breaker has had a chance to half-open. 5 attempts ≈ 7.5 minutes; 15%
+    # jitter so a backlog queued during an outage doesn't retry in lockstep.
+    MAILER_RETRY_DEFAULTS = { wait: 90, attempts: 5, jitter: 0.15 }.freeze
 
     CircuitSpec = Struct.new(
       :threshold,
@@ -39,7 +43,7 @@ module StandardCircuit
     end
 
     attr_accessor :sentry_enabled, :metric_prefix, :data_store, :logger
-    attr_reader :circuits, :prefixes, :extra_notifiers, :sentry_criticality_levels
+    attr_reader :circuits, :prefixes, :extra_notifiers, :sentry_criticality_levels, :mailer_retry
 
     def initialize
       @sentry_enabled = true
@@ -50,6 +54,21 @@ module StandardCircuit
       @circuits = {}
       @prefixes = {}
       @extra_notifiers = []
+      @mailer_retry = nil
+    end
+
+    # Opt in to retrying ActionMailer::MailDeliveryJob on
+    # StandardCircuit::Mailer::CircuitOpenError (see Mailer::Retry). Accepts:
+    #
+    #   nil / false — (default) off; the gem installs nothing.
+    #   true        — MAILER_RETRY_DEFAULTS (wait: 90, attempts: 5, jitter: 0.15)
+    #   Hash        — MAILER_RETRY_DEFAULTS merged with :wait / :attempts /
+    #                 :jitter. `wait:` takes anything `retry_on` does (seconds,
+    #                 a Duration, :polynomially_longer, a Proc).
+    #
+    # The reader returns nil or a frozen, complete Hash.
+    def mailer_retry=(value)
+      @mailer_retry = normalize_mailer_retry(value)
     end
 
     # Opt in to criticality-aware Sentry reporting for the built-in Sentry
@@ -134,6 +153,23 @@ module StandardCircuit
         raise ArgumentError,
           "sentry_criticality_levels must be nil, true, false, or a Hash of " \
           "criticality => Sentry level; got #{value.class}"
+      end
+    end
+
+    def normalize_mailer_retry(value)
+      case value
+      when nil, false then nil
+      when true       then MAILER_RETRY_DEFAULTS
+      when Hash
+        options = value.transform_keys(&:to_sym)
+        unknown = options.keys - MAILER_RETRY_DEFAULTS.keys
+        unless unknown.empty?
+          raise ArgumentError,
+            "unknown mailer_retry option(s) #{unknown.inspect}; allowed: #{MAILER_RETRY_DEFAULTS.keys.inspect}"
+        end
+        MAILER_RETRY_DEFAULTS.merge(options).freeze
+      else
+        raise ArgumentError, "mailer_retry must be nil, true, false, or a Hash; got #{value.class}"
       end
     end
 

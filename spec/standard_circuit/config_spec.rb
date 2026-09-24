@@ -64,4 +64,36 @@ RSpec.describe StandardCircuit::Config do
         .to raise_error(ArgumentError, /must be nil, true, false, or a Hash/)
     end
   end
+
+  describe "#mailer_retry" do
+    it "defaults to nil (off)" do
+      expect(config.mailer_retry).to be_nil
+    end
+
+    it "expands true to the defaults" do
+      config.mailer_retry = true
+      expect(config.mailer_retry).to eq(wait: 90, attempts: 5, jitter: 0.15)
+    end
+
+    it "merges a partial Hash over the defaults, accepting string keys" do
+      config.mailer_retry = { "attempts" => 8, wait: :polynomially_longer }
+      expect(config.mailer_retry).to eq(wait: :polynomially_longer, attempts: 8, jitter: 0.15)
+      expect(config.mailer_retry).to be_frozen
+    end
+
+    it "turns off with false" do
+      config.mailer_retry = true
+      config.mailer_retry = false
+      expect(config.mailer_retry).to be_nil
+    end
+
+    it "rejects unknown keys" do
+      expect { config.mailer_retry = { retries: 3 } }
+        .to raise_error(ArgumentError, /unknown mailer_retry option\(s\) \[:retries\]/)
+    end
+
+    it "rejects other types" do
+      expect { config.mailer_retry = 5 }.to raise_error(ArgumentError, /must be nil, true, false, or a Hash/)
+    end
+  end
 end

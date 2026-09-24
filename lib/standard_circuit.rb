@@ -22,6 +22,7 @@ require "standard_circuit/health"
 require "standard_circuit/runner"
 require "standard_circuit/mailer/circuit_open_error"
 require "standard_circuit/mailer/delivery_method"
+require "standard_circuit/mailer/retry"
 require "standard_circuit/controller_support"
 require "standard_circuit/engine" if defined?(::Rails::Engine)
 
@@ -34,6 +35,7 @@ module StandardCircuit
       yield config
       runner.apply_config!(config)
       subscribers.setup!
+      Mailer::Retry.install_on_load if config.mailer_retry
       config
     end
 

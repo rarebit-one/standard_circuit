@@ -8,7 +8,7 @@ Wraps the upstream `stoplight` gem with:
 - SDK-specific adapter error bundles (Stripe, AWS, Faraday, SMTP, Postmark) and circuit presets (`:postmark`, `:s3`)
 - Rails event emission (`standard_circuit.circuit.{opened,closed,degraded,fallback_invoked,registered}`) with built-in Logger, Sentry, and Sentry::Metrics subscribers
 - ActiveStorage S3 adapter with per-bucket circuit keying
-- Generic ActionMailer delivery-method wrapper (supports both instance and symbol `underlying:` forms)
+- Generic ActionMailer delivery-method wrapper (supports both instance and symbol `underlying:` forms) with opt-in `mailer_retry` for `deliver_later` jobs
 - Controller concern for standardized 503 responses on `Stoplight::Error::RedLight`
 - Test helpers (`force_open`, `force_closed`, `reset_force!`) with RSpec auto-cleanup
 
@@ -191,6 +191,62 @@ StandardCircuit.configure do |c|
   c.add_notifier(->(name, payload) { MyAlerting.notify(name, payload) })
 end
 ```
+
+## Mail delivery
+
+The `:standard_circuit` delivery method wraps any registered ActionMailer delivery method in a circuit and raises `StandardCircuit::Mailer::CircuitOpenError` (instead of attempting the send) while that circuit is open:
+
+```ruby
+# config/environments/production.rb
+config.action_mailer.delivery_method = :standard_circuit
+config.action_mailer.standard_circuit_settings = {
+  underlying: :postmark,
+  underlying_settings: { api_token: ENV.fetch("POSTMARK_API_TOKEN") },
+  circuit: :postmark
+}
+```
+
+### Retrying `deliver_later` while the circuit is open (`mailer_retry`)
+
+Without a retry, a `deliver_later` job that runs during an outage fails once and the email is lost. Opt in and the gem installs `retry_on CircuitOpenError` on `ActionMailer::MailDeliveryJob`:
+
+```ruby
+StandardCircuit.configure do |c|
+  c.mailer_retry = true                        # wait: 90, attempts: 5, jitter: 0.15
+  # c.mailer_retry = { wait: 120, attempts: 8 } # partial overrides; wait: takes anything retry_on does
+end
+```
+
+- **Off by default.** Nothing is installed unless you set it.
+- **Keep `wait` longer than the mail circuit's `cool_off_time`** (the `:postmark` preset uses 60s), or retries land on a circuit that is still open.
+- **Reload-safe and idempotent.** Calling `configure` from `to_prepare` on every reload installs the handler once. If a `retry_on CircuitOpenError` is already on the job (for example your old initializer, during migration), the gem leaves it alone. The first install wins, so changing the options later needs a restart.
+- **Subclasses inherit it.** A custom `self.delivery_job = MyJob < ActionMailer::MailDeliveryJob` gets the handler, and a `retry_on CircuitOpenError` declared on the subclass takes precedence.
+- **On exhaustion** it writes one `error` log line, sends a Sentry `:error` event (when `sentry_enabled` and Sentry is initialized, fingerprinted by mailer and action), and emits `standard_circuit.mailer.retries_exhausted`. Every payload holds only `mailer_class`, `mail_action`, `recipient_domains`, `job_id` and `executions`: recipient **domains**, never addresses or subjects.
+- Only `CircuitOpenError` is retried. Errors from the provider while the circuit is closed, such as a SendGrid 429 or a Postmark 422, keep their existing behaviour. Add your own `retry_on` / `discard_on` for those.
+
+Replace your host code with:
+
+```ruby
+# Before — config/initializers/mail_delivery_retry.rb (~40–60 lines)
+Rails.application.config.to_prepare do
+  next if ActionMailer::MailDeliveryJob.rescue_handlers.any? { |h| h.first == StandardCircuit::Mailer::CircuitOpenError.name }
+
+  ActionMailer::MailDeliveryJob.retry_on(StandardCircuit::Mailer::CircuitOpenError,
+    wait: 90.seconds, attempts: 5, jitter: 0.15) do |job, error|
+    # ...recipient-domain extraction, Rails.logger.error, Sentry.capture_message...
+  end
+end
+
+# After — inside your existing StandardCircuit.configure block
+c.mailer_retry = true
+# or, keeping ENV tunables:
+c.mailer_retry = {
+  wait: ENV.fetch("SENDGRID_CIRCUIT_RETRY_WAIT", 90).to_i,
+  attempts: ENV.fetch("SENDGRID_CIRCUIT_RETRY_ATTEMPTS", 5).to_i
+}
+```
+
+The Sentry fingerprint changes to `["standard_circuit-mailer-retries-exhausted", mailer, action]`, so the first exhaustion after switching opens a new Sentry issue rather than regrouping into your old one.
 
 ## Streaming and non-controller contexts
 
