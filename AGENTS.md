@@ -77,7 +77,7 @@ end
 
 ### Health
 
-`Health.snapshot(runner, config)` enumerates every named circuit plus any prefix-matched circuit already cached. `Health.overall(snapshot)` collapses to `:ok | :degraded | :critical` based on criticality + color. `StandardCircuit.health_report` returns both atomically — prefer it over calling `health_snapshot` and `health_overall` separately.
+`Health.snapshot(runner, config)` enumerates every named circuit plus any prefix-matched circuit already cached. `Health.overall(snapshot)` collapses to `:ok | :degraded | :critical` based on criticality + color. `StandardCircuit.health_report` returns both atomically — it is the only public reader (the separate `health_snapshot` / `health_overall` module readers were removed in 0.5).
 
 ### Notifiers
 

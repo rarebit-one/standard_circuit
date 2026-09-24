@@ -12,8 +12,8 @@ module StandardCircuit
   #     get "/health", to: "standard_circuit/health#show"
   #   end
   #
-  # The pre-0.4 `require "standard_circuit/health_controller"` still works but
-  # is deprecated (see lib/standard_circuit/health_controller.rb).
+  # The pre-0.4 `require "standard_circuit/health_controller"` was removed in
+  # 0.5 (it raises LoadError); delete it and keep the route.
   #
   # Inherits from +ActionController::API+ to sidestep any ApplicationController
   # filters (authentication, bootstrap redirects, etc.) — health probes must be

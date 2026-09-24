@@ -206,33 +206,12 @@ RSpec.describe StandardCircuit::Health do
       expected = { "yellow" => :degraded, "red" => :critical }.fetch(color, :ok)
       expect(StandardCircuit.health_report[:status]).to eq(expected)
     end
-
-    it "accepts a pre-computed snapshot so callers avoid double-reading the store" do
-      StandardCircuit.configure do |c|
-        c.register(:payments, criticality: :critical)
-      end
-      snapshot = StandardCircuit.runner.health_snapshot
-
-      expect(StandardCircuit.runner.health_overall(snapshot)).to eq(:ok)
-      expect(described_class).not_to receive(:snapshot)
-      StandardCircuit.runner.health_overall(snapshot)
-    end
   end
 
-  describe "deprecated module-level readers" do
-    before do
-      allow(StandardCircuit.deprecator).to receive(:warn)
-      StandardCircuit.configure { |c| c.register(:payments, criticality: :critical) }
-    end
-
-    it "StandardCircuit.health_snapshot still works and points at health_report" do
-      expect(StandardCircuit.health_snapshot).to eq(StandardCircuit.health_report[:circuits])
-      expect(StandardCircuit.deprecator).to have_received(:warn).with(/health_snapshot is deprecated.*health_report\[:circuits\]/)
-    end
-
-    it "StandardCircuit.health_overall still works and points at health_report" do
-      expect(StandardCircuit.health_overall).to eq(:ok)
-      expect(StandardCircuit.deprecator).to have_received(:warn).with(/health_overall is deprecated.*health_report\[:status\]/)
+  describe "readers removed in 0.5" do
+    it "no longer defines StandardCircuit.health_snapshot / health_overall (use health_report)" do
+      expect(StandardCircuit).not_to respond_to(:health_snapshot)
+      expect(StandardCircuit).not_to respond_to(:health_overall)
     end
   end
 

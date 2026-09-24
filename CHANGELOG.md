@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-09-24
+
+**Breaking.** Removes everything 0.4 deprecated. Behaviour of everything that remains is unchanged, including 0.4.2's `mailer_retry` (exhaustion reports, then re-raises so the job dead-letters).
+
+### Removed
+- `require "standard_circuit/health_controller"`. The shim file is gone, so the require now raises `LoadError`. `StandardCircuit::HealthController` is autoloaded by the engine (since 0.4); keep the `get "/health", to: "standard_circuit/health#show"` route and delete the require.
+- `StandardCircuit.health_snapshot` and `StandardCircuit.health_overall`. Use `StandardCircuit.health_report[:circuits]` / `[:status]`, which read both atomically. `StandardCircuit::Runner#health_overall`, which only backed the removed reader, is removed too; `Runner#health_snapshot` stays because `health_report` uses it.
+- `StandardCircuit::AdapterErrors::Faraday.caller_errors`. `Faraday::ClientError` is never in `ErrorTaxonomies::Faraday.tracked`, so skipping it was a no-op. `Aws`, `Stripe`, `Smtp` and `Postmark` `caller_errors` are unchanged.
+- `StandardCircuit::ActiveStorage::S3Service`, the unused alias. Use `ActiveStorage::Service::StandardCircuitS3Service`, or `service: StandardCircuitS3` in storage.yml (unchanged).
+- The boot probe's two legacy-require modes; a spec now pins the `LoadError`.
+
+### Changed
+- `StandardCircuit.deprecator`'s horizon is now `0.6`.
+
+### Upgrade notes
+- **No host code change is required in any of the five consumer apps.** Grepped `origin/main` of sidekick-web, jumpdrive-web (control-plane), fundbright-web, luminality-web and nutripod-web on 2026-09-24: none calls `health_snapshot` / `health_overall` / `Faraday.caller_errors`, references `StandardCircuit::ActiveStorage::S3Service`, or requires `standard_circuit/health_controller` (sidekick-web's `health_snapshots` is an unrelated model).
+- Regenerate Sorbet RBIs after bumping (`bin/tapioca gem standard_circuit`): jumpdrive-web's `control-plane/sorbet/rbi/gems/standard_circuit@0.4.1.rbi` still declares the removed readers. `require "standard_circuit/controller_support"` / `"standard_circuit/mailer/delivery_method"` in fundbright-web's and luminality-web's `sorbet/tapioca/require.rb` are still valid paths and can stay.
+- If anything outside these apps still has the legacy require, it now fails at boot with `LoadError` rather than warning. Delete the line.
+
 ## [0.4.2] - 2026-09-24
 
 ### Fixed

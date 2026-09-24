@@ -58,13 +58,8 @@ RSpec.describe StandardCircuit::HealthController do
   end
 
   describe "legacy require path" do
-    it "still loads via require \"standard_circuit/health_controller\" and warns it is no longer needed" do
-      allow(StandardCircuit.deprecator).to receive(:warn)
-
-      load "standard_circuit/health_controller.rb"
-
-      expect(StandardCircuit.deprecator).to have_received(:warn).with(/no longer needed.*autoloads/)
-      expect(StandardCircuit.const_defined?(:HealthController, false)).to be(true)
+    it "was removed in 0.5: require \"standard_circuit/health_controller\" raises LoadError" do
+      expect { require "standard_circuit/health_controller" }.to raise_error(LoadError)
     end
   end
 end

@@ -323,7 +323,7 @@ require "standard_circuit/health_controller"
 # After — delete the line (and the initializer, if that's all it contained).
 ```
 
-The old `require` still works in 0.4 but emits a deprecation through `Rails.application.deprecators[:standard_circuit]`. It will be removed in 0.5.
+The old `require` was deprecated in 0.4 and **removed in 0.5**: it now raises `LoadError`, so delete it.
 
 The controller inherits from `ActionController::API` to sidestep app-level filters (authentication, bootstrap redirects, etc.) so probes can call it anonymously.
 
@@ -350,17 +350,19 @@ These are supported public API for host test suites, not internals:
 
 All of these are **process-local**. They are test and console tools, not an operational kill switch (see `data_store` above).
 
-## Deprecations
+## Removed in 0.5
 
-0.4 deprecates the following. Each still works and warns through `Rails.application.deprecators[:standard_circuit]`, so your app's `config.active_support.deprecation` setting applies. They will be removed in 0.5.
+0.4 deprecated these and 0.5 removes them. None of the five consumer apps used any of them at removal time.
 
-| Deprecated | Use instead |
-|------------|-------------|
-| `require "standard_circuit/health_controller"` | nothing — the controller is autoloaded |
+| Removed | Use instead |
+|---------|-------------|
+| `require "standard_circuit/health_controller"` (now `LoadError`) | nothing — the controller is autoloaded; keep the route |
 | `StandardCircuit.health_snapshot` | `StandardCircuit.health_report[:circuits]` |
-| `StandardCircuit.health_overall` | `StandardCircuit.health_report[:status]` |
-| `StandardCircuit::AdapterErrors::Faraday.caller_errors` | drop it — `Faraday::ClientError` is never tracked, so skipping it is a no-op |
+| `StandardCircuit.health_overall` (and `StandardCircuit.runner.health_overall`) | `StandardCircuit.health_report[:status]` |
+| `StandardCircuit::AdapterErrors::Faraday.caller_errors` | drop it — `Faraday::ClientError` is never tracked, so skipping it was a no-op |
 | `StandardCircuit::ActiveStorage::S3Service` | `ActiveStorage::Service::StandardCircuitS3Service` / `service: StandardCircuitS3` |
+
+Future deprecations warn through `Rails.application.deprecators[:standard_circuit]`, so your app's `config.active_support.deprecation` setting applies.
 
 ## License
 

@@ -5,8 +5,7 @@ module StandardCircuit
   #
   # Intended for mounting in a Rails HealthController. Use +health_report+ —
   # it takes a single atomic snapshot, so the rendered status and circuits
-  # always describe the same moment (the separate module-level
-  # +health_snapshot+ / +health_overall+ readers are deprecated):
+  # always describe the same moment:
   #
   #   report = StandardCircuit.health_report
   #   render json: report, status: (report[:status] == :critical ? 503 : 200)

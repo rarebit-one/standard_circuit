@@ -15,29 +15,11 @@ RSpec.describe StandardCircuit::AdapterErrors::Faraday do
     end
   end
 
-  describe ".caller_errors (deprecated)" do
-    before { allow(StandardCircuit.deprecator).to receive(:warn) }
-
-    it "warns that it is deprecated" do
-      described_class.caller_errors
-      expect(StandardCircuit.deprecator).to have_received(:warn).with(/Faraday\.caller_errors is deprecated/)
-    end
-
-    it "lists the ClientError (4xx) base class" do
-      expect(described_class.caller_errors).to eq([ Faraday::ClientError ])
-    end
-
-    it "covers specific 4xx subclasses" do
-      expect(described_class.caller_errors.first).to be > Faraday::ResourceNotFound
-    end
-
-    it "returns [] when faraday isn't loaded" do
-      hide_const("Faraday")
-      expect(described_class.caller_errors).to eq([])
-    end
+  it "no longer defines .caller_errors (removed in 0.5; Faraday::ClientError is never tracked)" do
+    expect(described_class).not_to respond_to(:caller_errors)
   end
 
-  it "keeps server and caller errors from overlapping" do
+  it "never tracks client (4xx) errors" do
     described_class.server_errors.each do |server_error|
       expect(server_error).not_to be <= Faraday::ClientError
     end
