@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-09-24
+
+### Fixed
+- **`mailer_retry` no longer crashes a lazily-loaded process with `NameError: uninitialized constant ActionMailer::MailDeliveryJob`.** 0.4.0 installed the retry from `ActiveSupport.on_load(:active_job)` and referenced `ActionMailer::MailDeliveryJob` inside the hook. When `class MailDeliveryJob < ActiveJob::Base` was itself what loaded `ActiveJob::Base`, the hook ran while that class was still being autoloaded. In development this broke the first `deliver_later` of a fresh process, and `bin/tapioca dsl` hit it too. Eager-loaded production processes and RSpec runs were not affected. The retry is now installed at whichever of these happens first, and never while `MailDeliveryJob` is still mid-autoload:
+  - `ActiveJob::Base` loads when `MailDeliveryJob` can already be referenced safely.
+  - `ActionMailer::Base` loads. It references `MailDeliveryJob`, so the class is complete by then. Every delivery goes through a mailer, so this also covers a worker that deserializes the job before any mailer loads.
+  - Something subclasses `MailDeliveryJob`. This covers a custom `delivery_job` with its own `rescue_from` that loads before any mailer. The subclass's own handlers keep precedence.
+
+  A new integration spec boots a Rails app in a subprocess for each load order (mailer first, job first, subclass first, `ActiveJob::Base` first, eager load).
+
+  **Hosts can delete their workaround.** Any initializer that preloads `ActiveJob::Base` to dodge this bug, such as jumpdrive-web's `config.after_initialize { ActiveJob::Base }`, can be removed.
+
 ## [0.4.0] - 2026-09-24
 
 A developer-experience release that moves code copy-pasted across the five consumer apps into the gem. Everything is additive: behaviour is unchanged unless you opt in, and deprecated APIs keep working until 0.5.
