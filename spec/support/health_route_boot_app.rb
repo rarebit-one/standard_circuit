@@ -11,10 +11,9 @@
 # PROBE_MODE selects how the host gets hold of StandardCircuit::HealthController:
 #   autoload        — (default) no require; the engine autoloads it
 #   eager           — no require, config.eager_load = true (production shape)
-#   legacy_routes   — pre-0.4 `require "standard_circuit/health_controller"`
-#                     after boot, as consumers put it at the top of routes.rb
-#   legacy_initializer — the same require BEFORE boot, as the pre-0.4 install
-#                     generator's config/initializers/standard_circuit_health.rb did
+#
+# (The pre-0.4 `require "standard_circuit/health_controller"` modes were
+# dropped in 0.5, which removed that load path.)
 MODE = ENV.fetch("PROBE_MODE", "autoload")
 require "rails"
 require "action_controller/railtie"
@@ -23,8 +22,6 @@ require "standard_circuit"
 
 deprecations = []
 ActiveSupport::Notifications.subscribe("deprecation.standard_circuit") { |*, payload| deprecations << payload[:message] }
-
-require "standard_circuit/health_controller" if MODE == "legacy_initializer"
 
 class HealthRouteProbeApp < Rails::Application
   # A root with no app/ dir, so the gem checkout's own app/controllers isn't
@@ -41,8 +38,6 @@ class HealthRouteProbeApp < Rails::Application
 end
 
 HealthRouteProbeApp.initialize!
-
-require "standard_circuit/health_controller" if MODE == "legacy_routes"
 
 HealthRouteProbeApp.routes.draw do
   # The convention-prescribed aggregate route (see

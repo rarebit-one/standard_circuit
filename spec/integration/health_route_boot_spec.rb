@@ -76,20 +76,4 @@ RSpec.describe "aggregate health route in a booted Rails app" do
       expect(boot["autoload_pending"]).to eq("false")
     end
   end
-
-  context "with the pre-0.4 require at the top of routes.rb" do
-    let(:boot) { HealthRouteProbe.boot("legacy_routes") }
-
-    it_behaves_like "a working /health route"
-
-    it "emits one deprecation through the app's deprecators" do
-      expect(boot["deprecations"]).to eq("1")
-    end
-  end
-
-  context "with the pre-0.4 require in an initializer (before autoloaders are set up)" do
-    let(:boot) { HealthRouteProbe.boot("legacy_initializer") }
-
-    it_behaves_like "a working /health route"
-  end
 end

@@ -33,17 +33,3 @@ module ActiveStorage
     end
   end
 end
-
-module StandardCircuit
-  # @deprecated The StandardCircuit::ActiveStorage::S3Service alias is unused —
-  # storage.yml resolves `service: StandardCircuitS3` to
-  # ActiveStorage::Service::StandardCircuitS3Service — and is removed in 0.5.
-  module ActiveStorage
-    include ::ActiveSupport::Deprecation::DeprecatedConstantAccessor
-
-    deprecate_constant "S3Service", "::ActiveStorage::Service::StandardCircuitS3Service",
-      deprecator: StandardCircuit.deprecator,
-      message: "StandardCircuit::ActiveStorage::S3Service is deprecated and will be removed in 0.5; " \
-               "use ActiveStorage::Service::StandardCircuitS3Service (or `service: StandardCircuitS3` in storage.yml)."
-  end
-end
