@@ -246,6 +246,29 @@ c.mailer_retry = {
 
 The Sentry fingerprint changes to `["standard_circuit-mailer-retries-exhausted", mailer, action]`, so the first exhaustion after switching opens a new Sentry issue rather than regrouping into your old one.
 
+### Calling `configure` more than once
+
+`configure` is safe to call repeatedly. Apps register circuits from `to_prepare` because it's the first point where autoloaded error classes are available, and `to_prepare` re-runs on every code reload. Each call re-applies the config and rebuilds the subscribers. `add_notifier` is idempotent: adding "the same" notifier again replaces the earlier entry in place and does not stack a duplicate. Two notifiers are the same when they share an explicit `key:`, or else the same class name (a reloaded class is a new object with the same name), or for lambdas and methods the same source location. The newest instance wins. To register two instances of one class, give them distinct keys:
+
+```ruby
+c.add_notifier(WebhookNotifier.new(ops_url), key: :ops)
+c.add_notifier(WebhookNotifier.new(audit_url), key: :audit)
+```
+
+Replace your host code with:
+
+```ruby
+# Before — hand-rolled guard against stacking a notifier on every reload
+unless c.extra_notifiers.any? { |n| n.class.name == "CircuitAuditNotifier" }
+  c.add_notifier(CircuitAuditNotifier.new)
+end
+
+# After
+c.add_notifier(CircuitAuditNotifier.new)
+```
+
+Circuit registrations (`register` / `register_prefix` / `register_preset`) were already idempotent: the same name overwrites.
+
 ## Streaming and non-controller contexts
 
 `ControllerSupport.circuit_open_fallback` only works for non-streaming responses — once a `Live` controller has flushed any output, Rails can't render an error template over the wire. For a streaming controller, catch `Stoplight::Error::RedLight` *inside* the streaming proc and write a degraded payload before the stream closes:

@@ -54,6 +54,7 @@ module StandardCircuit
       @circuits = {}
       @prefixes = {}
       @extra_notifiers = []
+      @extra_notifier_keys = []
       @mailer_retry = nil
     end
 
@@ -91,6 +92,7 @@ module StandardCircuit
       @circuits.clear
       @prefixes.clear
       @extra_notifiers.clear
+      @extra_notifier_keys.clear
     end
 
     def register(name, **opts)
@@ -130,12 +132,36 @@ module StandardCircuit
     # `call(event_name, payload)` — Stoplight-shaped 4-arg notifiers from the
     # 0.1.x API are no longer accepted as extras (Logger / Sentry / Metrics
     # demonstrate the new shape).
-    def add_notifier(notifier)
+    #
+    # Idempotent: hosts call `configure` from `to_prepare`, which re-runs on
+    # every code reload, so re-adding "the same" notifier replaces the earlier
+    # entry in place instead of stacking a duplicate. "The same" means the same
+    # +key:+ when one is given, otherwise:
+    #
+    #   * a Proc / Method — same source location (a lambda re-created on reload)
+    #   * a Class / Module used directly — same name
+    #   * any other object — same class name (a reloaded class is a new class
+    #     object with the same name, so compare names, not classes)
+    #   * an instance of an anonymous class — never deduped
+    #
+    # The newest instance wins, so a reloaded notifier class takes effect.
+    # Pass distinct +key:+ values to register two instances of one class
+    # (e.g. two webhook notifiers pointed at different URLs).
+    def add_notifier(notifier, key: nil)
       unless notifier.respond_to?(:call)
         raise ArgumentError,
           "extra notifiers must respond to `call(event_name, payload)`; got #{notifier.class}"
       end
-      @extra_notifiers << notifier
+
+      identity = key.nil? ? notifier_identity(notifier) : [ :key, key ]
+      index = identity && @extra_notifier_keys.index(identity)
+      if index
+        @extra_notifiers[index] = notifier
+      else
+        @extra_notifiers << notifier
+        @extra_notifier_keys << identity
+      end
+      notifier
     end
 
     def spec_for(name)
@@ -153,6 +179,16 @@ module StandardCircuit
         raise ArgumentError,
           "sentry_criticality_levels must be nil, true, false, or a Hash of " \
           "criticality => Sentry level; got #{value.class}"
+      end
+    end
+
+    def notifier_identity(notifier)
+      if notifier.respond_to?(:source_location) && notifier.source_location
+        [ :source, notifier.source_location ]
+      elsif notifier.is_a?(Module)
+        notifier.name && [ :module, notifier.name ]
+      else
+        notifier.class.name && [ :class, notifier.class.name ]
       end
     end
 
