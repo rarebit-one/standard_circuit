@@ -1,5 +1,6 @@
 require "spec_helper"
 require "aws-sdk-s3"
+require "postmark"
 
 RSpec.describe StandardCircuit::ErrorTaxonomies do
   shared_examples "an adapter taxonomy" do |adapter_module|
@@ -31,8 +32,18 @@ RSpec.describe StandardCircuit::ErrorTaxonomies do
     it_behaves_like "an adapter taxonomy", StandardCircuit::AdapterErrors::Faraday
   end
 
+  describe described_class::Postmark do
+    it_behaves_like "an adapter taxonomy", StandardCircuit::AdapterErrors::Postmark
+  end
+
   describe ".default_skipped_for" do
     let(:aws_caller_errors) { [ Aws::S3::Errors::NoSuchKey, Aws::S3::Errors::AccessDenied ] }
+
+    it "returns the Postmark caller errors when the tracked list includes Postmark::HttpServerError" do
+      expect(described_class.default_skipped_for(described_class::Postmark.tracked))
+        .to eq([ Postmark::ApiInputError, Postmark::InvalidApiKeyError ])
+    end
+
 
     it "returns the AWS caller errors when the tracked list includes Aws::Errors::ServiceError" do
       expect(described_class.default_skipped_for(described_class::Aws.tracked)).to match_array(aws_caller_errors)

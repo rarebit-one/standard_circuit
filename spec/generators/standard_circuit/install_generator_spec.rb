@@ -105,19 +105,18 @@ RSpec.describe StandardCircuit::Generators::InstallGenerator, type: :generator d
   end
 
   describe "--with-health-endpoint" do
-    it "creates the health initializer that requires the controller" do
+    it "doesn't write a health initializer — the engine autoloads the controller" do
       run_generator([ "--with-health-endpoint" ])
 
-      expect(File).to exist(health_initializer_path)
-      content = File.read(health_initializer_path)
-      expect(content).to include('require "standard_circuit/health_controller"')
+      expect(File).not_to exist(health_initializer_path)
     end
 
     it "prints the route hint without modifying routes.rb" do
       output = run_generator([ "--with-health-endpoint" ])
 
       expect(output).to include('get "/health", to: "standard_circuit/health#show"')
-      expect(output).to include("StandardCircuit health endpoint installed.")
+      expect(output).to include("StandardCircuit health endpoint")
+      expect(output).to include("no require needed")
     end
 
     it "prints the route-ordering warning alongside the hint" do
@@ -127,39 +126,9 @@ RSpec.describe StandardCircuit::Generators::InstallGenerator, type: :generator d
       expect(output).to include("StandardHealth::Engine")
     end
 
-    it "repeats the ordering warning in the health initializer itself" do
-      run_generator([ "--with-health-endpoint" ])
-      content = File.read(health_initializer_path)
-
-      expect(content).to include("ORDERING IS LOAD-BEARING")
-      expect(content).to include("mount StandardHealth::Engine =>")
-    end
-
     it "still creates the main initializer" do
       run_generator([ "--with-health-endpoint" ])
       expect(File).to exist(initializer_path)
-    end
-
-    it "skips the health initializer when it already exists without --force" do
-      run_generator([ "--with-health-endpoint" ])
-      sentinel = "# user customisation\n"
-      File.write(health_initializer_path, sentinel)
-
-      output = run_generator([ "--with-health-endpoint" ])
-
-      expect(output).to include('already present, skipping')
-      expect(File.read(health_initializer_path)).to eq(sentinel)
-    end
-
-    it "overwrites the health initializer when --force is passed" do
-      run_generator([ "--with-health-endpoint" ])
-      sentinel = "# user customisation\n"
-      File.write(health_initializer_path, sentinel)
-
-      output = run_generator([ "--with-health-endpoint", "--force" ])
-
-      expect(File.read(health_initializer_path)).to include('require "standard_circuit/health_controller"')
-      expect(output).to include('get "/health", to: "standard_circuit/health#show"')
     end
   end
 end

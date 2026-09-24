@@ -13,7 +13,7 @@ RSpec.describe StandardCircuit::Health do
       before { StandardCircuit.configure { |_c| } }
 
       it "returns an empty array" do
-        expect(StandardCircuit.health_snapshot).to eq([])
+        expect(StandardCircuit.health_report[:circuits]).to eq([])
       end
     end
 
@@ -25,7 +25,7 @@ RSpec.describe StandardCircuit::Health do
       end
 
       it "eagerly builds the light and reports color=green" do
-        entry = StandardCircuit.health_snapshot.first
+        entry = StandardCircuit.health_report[:circuits].first
         expect(entry).to include(
           name: :stripe,
           color: "green",
@@ -44,7 +44,7 @@ RSpec.describe StandardCircuit::Health do
       end
 
       it "reports color=red and locked=true with criticality passed through" do
-        entry = StandardCircuit.health_snapshot.find { |e| e[:name] == :sendgrid }
+        entry = StandardCircuit.health_report[:circuits].find { |e| e[:name] == :sendgrid }
         expect(entry).to include(
           name: :sendgrid,
           color: "red",
@@ -66,7 +66,7 @@ RSpec.describe StandardCircuit::Health do
       end
 
       it "reports a non-green color reflecting actual state" do
-        entry = StandardCircuit.health_snapshot.find { |e| e[:name] == :slow_api }
+        entry = StandardCircuit.health_report[:circuits].find { |e| e[:name] == :slow_api }
         expect(entry[:name]).to eq(:slow_api)
         expect(entry[:color]).to satisfy { |c| [ "yellow", "red" ].include?(c) }
         expect(entry[:locked]).to be(false)
@@ -84,7 +84,7 @@ RSpec.describe StandardCircuit::Health do
       end
 
       it "includes one entry per registered circuit" do
-        names = StandardCircuit.health_snapshot.map { |e| e[:name] }.sort
+        names = StandardCircuit.health_report[:circuits].map { |e| e[:name] }.sort
         expect(names).to eq([ :a, :b, :c ])
       end
     end
@@ -100,7 +100,7 @@ RSpec.describe StandardCircuit::Health do
       end
 
       it "includes the exercised dynamic circuit in the snapshot" do
-        entry = StandardCircuit.health_snapshot.find { |e| e[:name] == :s3_user_content }
+        entry = StandardCircuit.health_report[:circuits].find { |e| e[:name] == :s3_user_content }
         expect(entry).to include(
           name: :s3_user_content,
           color: "green",
@@ -118,7 +118,7 @@ RSpec.describe StandardCircuit::Health do
 
       it "omits prefix-only circuits that have never been exercised" do
         # No dynamic :s3_* names have been touched; nothing to enumerate.
-        expect(StandardCircuit.health_snapshot).to eq([])
+        expect(StandardCircuit.health_report[:circuits]).to eq([])
       end
     end
 
@@ -132,7 +132,7 @@ RSpec.describe StandardCircuit::Health do
       end
 
       it "surfaces both categories with their respective criticalities" do
-        snapshot = StandardCircuit.health_snapshot
+        snapshot = StandardCircuit.health_report[:circuits]
         names = snapshot.map { |e| e[:name] }
         expect(names).to include(:stripe, :s3_bucket_one)
 
@@ -147,7 +147,7 @@ RSpec.describe StandardCircuit::Health do
   describe ".overall" do
     it "returns :ok when no entries are present" do
       StandardCircuit.configure { |_c| }
-      expect(StandardCircuit.health_overall).to eq(:ok)
+      expect(StandardCircuit.health_report[:status]).to eq(:ok)
     end
 
     it "returns :ok when every circuit is green" do
@@ -155,7 +155,7 @@ RSpec.describe StandardCircuit::Health do
         c.register(:a, criticality: :critical)
         c.register(:b, criticality: :standard)
       end
-      expect(StandardCircuit.health_overall).to eq(:ok)
+      expect(StandardCircuit.health_report[:status]).to eq(:ok)
     end
 
     it "returns :critical when any :critical circuit is red" do
@@ -164,7 +164,7 @@ RSpec.describe StandardCircuit::Health do
         c.register(:emails, criticality: :standard)
       end
       StandardCircuit.runner.light_for(:payments).lock(Stoplight::Color::RED)
-      expect(StandardCircuit.health_overall).to eq(:critical)
+      expect(StandardCircuit.health_report[:status]).to eq(:critical)
     end
 
     it "returns :degraded when a :standard circuit is red but no :critical is red" do
@@ -173,7 +173,7 @@ RSpec.describe StandardCircuit::Health do
         c.register(:emails, criticality: :standard)
       end
       StandardCircuit.runner.light_for(:emails).lock(Stoplight::Color::RED)
-      expect(StandardCircuit.health_overall).to eq(:degraded)
+      expect(StandardCircuit.health_report[:status]).to eq(:degraded)
     end
 
     it "returns :ok when only an :optional circuit is red" do
@@ -182,7 +182,7 @@ RSpec.describe StandardCircuit::Health do
         c.register(:nice_to_have, criticality: :optional)
       end
       StandardCircuit.runner.light_for(:nice_to_have).lock(Stoplight::Color::RED)
-      expect(StandardCircuit.health_overall).to eq(:ok)
+      expect(StandardCircuit.health_report[:status]).to eq(:ok)
     end
 
     it "prefers :critical over :degraded when both conditions are met" do
@@ -192,7 +192,7 @@ RSpec.describe StandardCircuit::Health do
       end
       StandardCircuit.runner.light_for(:payments).lock(Stoplight::Color::RED)
       StandardCircuit.runner.light_for(:emails).lock(Stoplight::Color::RED)
-      expect(StandardCircuit.health_overall).to eq(:critical)
+      expect(StandardCircuit.health_report[:status]).to eq(:critical)
     end
 
     it "derives overall status from color for a tripped :critical circuit" do
@@ -202,20 +202,37 @@ RSpec.describe StandardCircuit::Health do
       end
       trip_once(:llm)
 
-      color = StandardCircuit.health_snapshot.first[:color]
+      color = StandardCircuit.health_report[:circuits].first[:color]
       expected = { "yellow" => :degraded, "red" => :critical }.fetch(color, :ok)
-      expect(StandardCircuit.health_overall).to eq(expected)
+      expect(StandardCircuit.health_report[:status]).to eq(expected)
     end
 
     it "accepts a pre-computed snapshot so callers avoid double-reading the store" do
       StandardCircuit.configure do |c|
         c.register(:payments, criticality: :critical)
       end
-      snapshot = StandardCircuit.health_snapshot
+      snapshot = StandardCircuit.runner.health_snapshot
 
-      expect(StandardCircuit.health_overall(snapshot)).to eq(:ok)
+      expect(StandardCircuit.runner.health_overall(snapshot)).to eq(:ok)
       expect(described_class).not_to receive(:snapshot)
-      StandardCircuit.health_overall(snapshot)
+      StandardCircuit.runner.health_overall(snapshot)
+    end
+  end
+
+  describe "deprecated module-level readers" do
+    before do
+      allow(StandardCircuit.deprecator).to receive(:warn)
+      StandardCircuit.configure { |c| c.register(:payments, criticality: :critical) }
+    end
+
+    it "StandardCircuit.health_snapshot still works and points at health_report" do
+      expect(StandardCircuit.health_snapshot).to eq(StandardCircuit.health_report[:circuits])
+      expect(StandardCircuit.deprecator).to have_received(:warn).with(/health_snapshot is deprecated.*health_report\[:circuits\]/)
+    end
+
+    it "StandardCircuit.health_overall still works and points at health_report" do
+      expect(StandardCircuit.health_overall).to eq(:ok)
+      expect(StandardCircuit.deprecator).to have_received(:warn).with(/health_overall is deprecated.*health_report\[:status\]/)
     end
   end
 

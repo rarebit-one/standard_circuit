@@ -5,10 +5,10 @@ Circuit breaker primitives for Rails apps, built on [stoplight](https://github.c
 Wraps the upstream `stoplight` gem with:
 
 - Opinionated default error taxonomy (network errors track; caller/config errors do not)
-- SDK-specific adapter error bundles (Stripe, AWS, Faraday, SMTP)
+- SDK-specific adapter error bundles (Stripe, AWS, Faraday, SMTP, Postmark) and circuit presets (`:postmark`, `:s3`)
 - Rails event emission (`standard_circuit.circuit.{opened,closed,degraded,fallback_invoked,registered}`) with built-in Logger, Sentry, and Sentry::Metrics subscribers
 - ActiveStorage S3 adapter with per-bucket circuit keying
-- Generic ActionMailer delivery-method wrapper (supports both instance and symbol `underlying:` forms)
+- Generic ActionMailer delivery-method wrapper (supports both instance and symbol `underlying:` forms) with opt-in `mailer_retry` for `deliver_later` jobs
 - Controller concern for standardized 503 responses on `Stoplight::Error::RedLight`
 - Test helpers (`force_open`, `force_closed`, `reset_force!`) with RSpec auto-cleanup
 
@@ -27,10 +27,8 @@ bundle add standard_circuit
 rails g standard_circuit:install
 ```
 
-Pass `--with-health-endpoint` to also generate
-`config/initializers/standard_circuit_health.rb` (which requires the opt-in
-health controller); the generator prints the matching route line for you to
-add to `config/routes.rb`.
+Pass `--with-health-endpoint` to also print the route line for the health
+endpoint, for you to add to `config/routes.rb`.
 
 The generator is idempotent — re-running skips an existing initializer
 unless you pass `--force`.
@@ -60,9 +58,9 @@ end
 
 ## Error taxonomies
 
-`tracked_errors` decide what counts toward tripping a circuit; `skipped_errors` are re-raised without counting (and win over `tracked_errors` when a class matches both). `StandardCircuit::ErrorTaxonomies::<Adapter>.tracked` combines `NetworkErrors.defaults` with the adapter's server-side errors for `Stripe`, `Smtp`, `Aws`, and `Faraday`; `StandardCircuit::AdapterErrors::<Adapter>.caller_errors` lists the adapter's caller-side (4xx-style) errors.
+`tracked_errors` decide what counts toward tripping a circuit; `skipped_errors` are re-raised without counting (and win over `tracked_errors` when a class matches both). `StandardCircuit::ErrorTaxonomies::<Adapter>.tracked` combines `NetworkErrors.defaults` with the adapter's server-side errors for `Stripe`, `Smtp`, `Aws`, `Faraday`, and `Postmark`; `StandardCircuit::AdapterErrors::<Adapter>.caller_errors` lists the adapter's caller-side (4xx-style) errors.
 
-When `skipped_errors:` is omitted it defaults to `[]` — except when the tracked list covers the AWS caller errors. AWS 5xx responses are dynamically generated `Aws::Errors::ServiceError` subclasses, so `ErrorTaxonomies::Aws.tracked` has to track `ServiceError` itself, which is also the superclass of `Aws::S3::Errors::AccessDenied` and `NoSuchKey`. So for such circuits `skipped_errors` defaults to `AdapterErrors::Aws.caller_errors` (via `ErrorTaxonomies.default_skipped_for`), and a burst of missing-key lookups or permission errors no longer trips the S3 breaker:
+When `skipped_errors:` is omitted it defaults to `[]` — except when the tracked list covers the AWS or Postmark caller errors. (Postmark's `ApiInputError` and `InvalidApiKeyError` subclass `Postmark::HttpServerError`, so a circuit tracking `ErrorTaxonomies::Postmark.tracked` without `skipped_errors:` defaults to skipping them.) AWS 5xx responses are dynamically generated `Aws::Errors::ServiceError` subclasses, so `ErrorTaxonomies::Aws.tracked` has to track `ServiceError` itself, which is also the superclass of `Aws::S3::Errors::AccessDenied` and `NoSuchKey`. So for such circuits `skipped_errors` defaults to `AdapterErrors::Aws.caller_errors` (via `ErrorTaxonomies.default_skipped_for`), and a burst of missing-key lookups or permission errors no longer trips the S3 breaker:
 
 ```ruby
 StandardCircuit.configure do |c|
@@ -73,6 +71,42 @@ StandardCircuit.configure do |c|
   # c.register(:s3_strict, tracked_errors: StandardCircuit::ErrorTaxonomies::Aws.tracked, skipped_errors: [])
 end
 ```
+
+## Presets
+
+Some integrations were registered identically, line for line, in several apps. `c.register_preset` registers them with the shared settings; any `register` option you pass alongside wins, and `name:` renames the circuit.
+
+| Preset | Registers | Settings |
+|--------|-----------|----------|
+| `:postmark` | `register(:postmark, ...)` | threshold 3, cool-off 60s, `:standard`, `ErrorTaxonomies::Postmark.tracked`, skips `AdapterErrors::Postmark.caller_errors` |
+| `:s3` | `register_prefix(:s3, ...)` — matches the `s3_<bucket>` circuits `StandardCircuitS3` opens | threshold 3, cool-off 30s, `:standard`, `ErrorTaxonomies::Aws.tracked`, skips `NoSuchKey` / `AccessDenied` |
+
+Each preset requires its SDK (`postmark`, `aws-sdk-s3`) before building the error lists and raises `ArgumentError` if the gem is missing. That matters for `gem "aws-sdk-s3", require: false`: `ErrorTaxonomies::Aws.tracked` returns only network errors when the SDK hasn't been loaded yet at configure time, which quietly leaves S3 5xx responses untracked.
+
+Replace your host code with:
+
+```ruby
+# Before — config/initializers/standard_circuit.rb
+c.register(:postmark,
+  threshold: 3,
+  cool_off_time: 60,
+  criticality: :standard,
+  tracked_errors: StandardCircuit::NetworkErrors.defaults +
+                  [ Postmark::HttpServerError, Postmark::TimeoutError ],
+  skipped_errors: [ Postmark::ApiInputError, Postmark::InvalidApiKeyError ])
+
+c.register_prefix(:s3,
+  threshold: 3,
+  cool_off_time: 30,
+  criticality: :standard,
+  tracked_errors: StandardCircuit::ErrorTaxonomies::Aws.tracked)
+
+# After
+c.register_preset(:postmark)
+c.register_preset(:s3)
+```
+
+There is deliberately no `:stripe` preset — the apps that wrap Stripe disagree on threshold, criticality, and skips, so `ErrorTaxonomies::Stripe.tracked` stays the shared piece.
 
 ## Circuit state storage (`data_store`)
 
@@ -156,6 +190,85 @@ StandardCircuit.configure do |c|
 end
 ```
 
+## Mail delivery
+
+The `:standard_circuit` delivery method wraps any registered ActionMailer delivery method in a circuit and raises `StandardCircuit::Mailer::CircuitOpenError` (instead of attempting the send) while that circuit is open:
+
+```ruby
+# config/environments/production.rb
+config.action_mailer.delivery_method = :standard_circuit
+config.action_mailer.standard_circuit_settings = {
+  underlying: :postmark,
+  underlying_settings: { api_token: ENV.fetch("POSTMARK_API_TOKEN") },
+  circuit: :postmark
+}
+```
+
+### Retrying `deliver_later` while the circuit is open (`mailer_retry`)
+
+Without a retry, a `deliver_later` job that runs during an outage fails once and the email is lost. Opt in and the gem installs `retry_on CircuitOpenError` on `ActionMailer::MailDeliveryJob`:
+
+```ruby
+StandardCircuit.configure do |c|
+  c.mailer_retry = true                        # wait: 90, attempts: 5, jitter: 0.15
+  # c.mailer_retry = { wait: 120, attempts: 8 } # partial overrides; wait: takes anything retry_on does
+end
+```
+
+- **Off by default.** Nothing is installed unless you set it.
+- **Keep `wait` longer than the mail circuit's `cool_off_time`** (the `:postmark` preset uses 60s), or retries land on a circuit that is still open.
+- **Reload-safe and idempotent.** Calling `configure` from `to_prepare` on every reload installs the handler once. If a `retry_on CircuitOpenError` is already on the job (for example your old initializer, during migration), the gem leaves it alone. The first install wins, so changing the options later needs a restart.
+- **Subclasses inherit it.** A custom `self.delivery_job = MyJob < ActionMailer::MailDeliveryJob` gets the handler, and a `retry_on CircuitOpenError` declared on the subclass takes precedence.
+- **On exhaustion** it writes one `error` log line, sends a Sentry `:error` event (when `sentry_enabled` and Sentry is initialized, fingerprinted by mailer and action), and emits `standard_circuit.mailer.retries_exhausted`. Every payload holds only `mailer_class`, `mail_action`, `recipient_domains`, `job_id` and `executions`: recipient **domains**, never addresses or subjects.
+- Only `CircuitOpenError` is retried. Errors from the provider while the circuit is closed, such as a SendGrid 429 or a Postmark 422, keep their existing behaviour. Add your own `retry_on` / `discard_on` for those.
+
+Replace your host code with:
+
+```ruby
+# Before — config/initializers/mail_delivery_retry.rb (~40–60 lines)
+Rails.application.config.to_prepare do
+  next if ActionMailer::MailDeliveryJob.rescue_handlers.any? { |h| h.first == StandardCircuit::Mailer::CircuitOpenError.name }
+
+  ActionMailer::MailDeliveryJob.retry_on(StandardCircuit::Mailer::CircuitOpenError,
+    wait: 90.seconds, attempts: 5, jitter: 0.15) do |job, error|
+    # ...recipient-domain extraction, Rails.logger.error, Sentry.capture_message...
+  end
+end
+
+# After — inside your existing StandardCircuit.configure block
+c.mailer_retry = true
+# or, keeping ENV tunables:
+c.mailer_retry = {
+  wait: ENV.fetch("SENDGRID_CIRCUIT_RETRY_WAIT", 90).to_i,
+  attempts: ENV.fetch("SENDGRID_CIRCUIT_RETRY_ATTEMPTS", 5).to_i
+}
+```
+
+The Sentry fingerprint changes to `["standard_circuit-mailer-retries-exhausted", mailer, action]`, so the first exhaustion after switching opens a new Sentry issue rather than regrouping into your old one.
+
+### Calling `configure` more than once
+
+`configure` is safe to call repeatedly. Apps register circuits from `to_prepare` because it's the first point where autoloaded error classes are available, and `to_prepare` re-runs on every code reload. Each call re-applies the config and rebuilds the subscribers. `add_notifier` is idempotent: adding "the same" notifier again replaces the earlier entry in place and does not stack a duplicate. Two notifiers are the same when they share an explicit `key:`, or else the same class name (a reloaded class is a new object with the same name), or for lambdas and methods the same source location. The newest instance wins. To register two instances of one class, give them distinct keys:
+
+```ruby
+c.add_notifier(WebhookNotifier.new(ops_url), key: :ops)
+c.add_notifier(WebhookNotifier.new(audit_url), key: :audit)
+```
+
+Replace your host code with:
+
+```ruby
+# Before — hand-rolled guard against stacking a notifier on every reload
+unless c.extra_notifiers.any? { |n| n.class.name == "CircuitAuditNotifier" }
+  c.add_notifier(CircuitAuditNotifier.new)
+end
+
+# After
+c.add_notifier(CircuitAuditNotifier.new)
+```
+
+Circuit registrations (`register` / `register_prefix` / `register_preset`) were already idempotent: the same name overwrites.
+
 ## Streaming and non-controller contexts
 
 `ControllerSupport.circuit_open_fallback` only works for non-streaming responses — once a `Live` controller has flushed any output, Rails can't render an error template over the wire. For a streaming controller, catch `Stoplight::Error::RedLight` *inside* the streaming proc and write a degraded payload before the stream closes:
@@ -190,18 +303,27 @@ Same pattern applies in background jobs (where `circuit_open_fallback` doesn't h
 
 ## Health endpoint
 
-StandardCircuit ships an opt-in controller that renders `StandardCircuit.health_report` as JSON. It returns 503 when the rolled-up status is `:critical` (so orchestrators pull the instance out of rotation) and 200 otherwise.
+StandardCircuit ships a controller that renders `StandardCircuit.health_report` as JSON. It returns 503 when the rolled-up status is `:critical` (so orchestrators pull the instance out of rotation) and 200 otherwise.
 
-It's opt-in — not auto-required — so apps that don't want a health route don't pay for it.
+The controller lives in the engine's `app/controllers`, so it is autoloaded. The route is the only opt-in, and apps that don't draw it never load the controller.
 
 ```ruby
 # config/routes.rb
-require "standard_circuit/health_controller"
-
 Rails.application.routes.draw do
   get "/health", to: "standard_circuit/health#show"
 end
 ```
+
+Replace your host code with:
+
+```ruby
+# Before — top of config/routes.rb (or config/initializers/standard_circuit_health.rb)
+require "standard_circuit/health_controller"
+
+# After — delete the line (and the initializer, if that's all it contained).
+```
+
+The old `require` still works in 0.4 but emits a deprecation through `Rails.application.deprecators[:standard_circuit]`. It will be removed in 0.5.
 
 The controller inherits from `ActionController::API` to sidestep app-level filters (authentication, bootstrap redirects, etc.) so probes can call it anonymously.
 
@@ -213,6 +335,32 @@ mount StandardHealth::Engine => "/health", as: :standard_health
 ```
 
 `StandardHealth::Engine` registers sub-paths only (`/alive`, `/ready`, `/diagnostics/env`) — it never serves the aggregate tier itself. An app that mounts the engine and assumes `/health` is covered silently has no aggregate tier at all, with no boot error and no failing route spec to reveal it. The ordering is load-bearing; draw the aggregate route explicitly, first.
+
+## Test API
+
+These are supported public API for host test suites, not internals:
+
+| Method | What it does |
+|--------|--------------|
+| `StandardCircuit.force_open(name) { ... }` | Treat `name` as open for the block (or until `reset_force!` without a block): `run` raises `Stoplight::Error::RedLight`, or returns the fallback. Emits the same `run.completed` / `fallback_invoked` events as a real open circuit. |
+| `StandardCircuit.force_closed(name) { ... }` | Bypass the circuit for the block — `run` just yields. No events. |
+| `StandardCircuit.reset_force!` | Clear every forced state. |
+| `StandardCircuit.reset!` | Clear the light cache and forced states, and swap in a fresh `Memory` data store (left alone when the store is Redis). |
+| `require "standard_circuit/rspec"` | Adds a `before(:each)` that runs `reset!` and tears down subscribers. Circuit registrations are kept. |
+
+All of these are **process-local**. They are test and console tools, not an operational kill switch (see `data_store` above).
+
+## Deprecations
+
+0.4 deprecates the following. Each still works and warns through `Rails.application.deprecators[:standard_circuit]`, so your app's `config.active_support.deprecation` setting applies. They will be removed in 0.5.
+
+| Deprecated | Use instead |
+|------------|-------------|
+| `require "standard_circuit/health_controller"` | nothing — the controller is autoloaded |
+| `StandardCircuit.health_snapshot` | `StandardCircuit.health_report[:circuits]` |
+| `StandardCircuit.health_overall` | `StandardCircuit.health_report[:status]` |
+| `StandardCircuit::AdapterErrors::Faraday.caller_errors` | drop it — `Faraday::ClientError` is never tracked, so skipping it is a no-op |
+| `StandardCircuit::ActiveStorage::S3Service` | `ActiveStorage::Service::StandardCircuitS3Service` / `service: StandardCircuitS3` |
 
 ## License
 

@@ -7,13 +7,32 @@
 # fallback via `hide_const("Rails")` under `config.order = :random`.
 #
 # Prints `key=value` lines for the spec to assert on.
+#
+# PROBE_MODE selects how the host gets hold of StandardCircuit::HealthController:
+#   autoload        — (default) no require; the engine autoloads it
+#   eager           — no require, config.eager_load = true (production shape)
+#   legacy_routes   — pre-0.4 `require "standard_circuit/health_controller"`
+#                     after boot, as consumers put it at the top of routes.rb
+#   legacy_initializer — the same require BEFORE boot, as the pre-0.4 install
+#                     generator's config/initializers/standard_circuit_health.rb did
+MODE = ENV.fetch("PROBE_MODE", "autoload")
 require "rails"
 require "action_controller/railtie"
 require "rack/test"
 require "standard_circuit"
 
+deprecations = []
+ActiveSupport::Notifications.subscribe("deprecation.standard_circuit") { |*, payload| deprecations << payload[:message] }
+
+require "standard_circuit/health_controller" if MODE == "legacy_initializer"
+
 class HealthRouteProbeApp < Rails::Application
-  config.eager_load = false
+  # A root with no app/ dir, so the gem checkout's own app/controllers isn't
+  # also picked up as an *application* autoload path (Rails falls back to
+  # Dir.pwd for the root, which is the gem checkout when rspec runs this).
+  config.root = File.expand_path("health_route_boot_app_root", __dir__)
+  config.eager_load = MODE == "eager"
+  config.active_support.deprecation = :notify
   config.load_defaults 8.0
   config.secret_key_base = "x" * 64
   config.logger = Logger.new(IO::NULL)
@@ -23,8 +42,7 @@ end
 
 HealthRouteProbeApp.initialize!
 
-# Host-side opt-in, exactly as the README and the install generator prescribe.
-require "standard_circuit/health_controller"
+require "standard_circuit/health_controller" if MODE == "legacy_routes"
 
 HealthRouteProbeApp.routes.draw do
   # The convention-prescribed aggregate route (see
@@ -41,6 +59,8 @@ include Rack::Test::Methods # rubocop:disable Style/MixinUsage
 
 def app = HealthRouteProbeApp
 
+autoload_pending = !StandardCircuit.autoload?(:HealthController).nil?
+
 get "/health"
 
 puts "engine_isolated=#{StandardCircuit::Engine.isolated?}"
@@ -49,4 +69,6 @@ puts "status=#{last_response.status}"
 puts "content_type=#{last_response.headers['content-type']}"
 puts "body=#{last_response.body}"
 puts "table_name_prefix=#{StandardCircuit.table_name_prefix}"
+puts "autoload_pending=#{autoload_pending}"
+puts "deprecations=#{deprecations.size}"
 puts "main_app_helper=#{StandardCircuit::HealthController.new.respond_to?(:main_app)}"

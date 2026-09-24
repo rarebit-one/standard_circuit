@@ -15,7 +15,14 @@ RSpec.describe StandardCircuit::AdapterErrors::Faraday do
     end
   end
 
-  describe ".caller_errors" do
+  describe ".caller_errors (deprecated)" do
+    before { allow(StandardCircuit.deprecator).to receive(:warn) }
+
+    it "warns that it is deprecated" do
+      described_class.caller_errors
+      expect(StandardCircuit.deprecator).to have_received(:warn).with(/Faraday\.caller_errors is deprecated/)
+    end
+
     it "lists the ClientError (4xx) base class" do
       expect(described_class.caller_errors).to eq([ Faraday::ClientError ])
     end

@@ -3,12 +3,15 @@ require "concurrent"
 require "sentry-ruby"
 
 require "standard_circuit/version"
+require "standard_circuit/deprecator"
 require "standard_circuit/network_errors"
 require "standard_circuit/adapter_errors/stripe"
 require "standard_circuit/adapter_errors/aws"
 require "standard_circuit/adapter_errors/faraday"
 require "standard_circuit/adapter_errors/smtp"
+require "standard_circuit/adapter_errors/postmark"
 require "standard_circuit/error_taxonomies"
+require "standard_circuit/presets"
 require "standard_circuit/event_emitter"
 require "standard_circuit/notifier_bridge"
 require "standard_circuit/notifiers/logger"
@@ -20,6 +23,7 @@ require "standard_circuit/health"
 require "standard_circuit/runner"
 require "standard_circuit/mailer/circuit_open_error"
 require "standard_circuit/mailer/delivery_method"
+require "standard_circuit/mailer/retry"
 require "standard_circuit/controller_support"
 require "standard_circuit/engine" if defined?(::Rails::Engine)
 
@@ -32,6 +36,7 @@ module StandardCircuit
       yield config
       runner.apply_config!(config)
       subscribers.setup!
+      Mailer::Retry.install_on_load if config.mailer_retry
       config
     end
 
@@ -67,11 +72,21 @@ module StandardCircuit
       runner.reset!
     end
 
+    # @deprecated Use +health_report[:circuits]+. Removed in 0.5.
     def health_snapshot
+      deprecator.warn(
+        "StandardCircuit.health_snapshot is deprecated and will be removed in 0.5; " \
+        "use StandardCircuit.health_report[:circuits] (one atomic read of status + circuits)."
+      )
       runner.health_snapshot
     end
 
+    # @deprecated Use +health_report[:status]+. Removed in 0.5.
     def health_overall(snapshot = nil)
+      deprecator.warn(
+        "StandardCircuit.health_overall is deprecated and will be removed in 0.5; " \
+        "use StandardCircuit.health_report[:status] (one atomic read of status + circuits)."
+      )
       runner.health_overall(snapshot)
     end
 

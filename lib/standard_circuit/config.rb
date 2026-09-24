@@ -5,6 +5,10 @@ module StandardCircuit
     DEFAULT_WINDOW = 60
     DEFAULT_CRITICALITY = :standard
     CRITICALITIES = [ :critical, :standard, :optional ].freeze
+    # 90s > the :postmark preset's 60s cool-off, so a retry lands after the
+    # breaker has had a chance to half-open. 5 attempts ≈ 7.5 minutes; 15%
+    # jitter so a backlog queued during an outage doesn't retry in lockstep.
+    MAILER_RETRY_DEFAULTS = { wait: 90, attempts: 5, jitter: 0.15 }.freeze
 
     CircuitSpec = Struct.new(
       :threshold,
@@ -39,7 +43,7 @@ module StandardCircuit
     end
 
     attr_accessor :sentry_enabled, :metric_prefix, :data_store, :logger
-    attr_reader :circuits, :prefixes, :extra_notifiers, :sentry_criticality_levels
+    attr_reader :circuits, :prefixes, :extra_notifiers, :sentry_criticality_levels, :mailer_retry
 
     def initialize
       @sentry_enabled = true
@@ -50,6 +54,22 @@ module StandardCircuit
       @circuits = {}
       @prefixes = {}
       @extra_notifiers = []
+      @extra_notifier_keys = []
+      @mailer_retry = nil
+    end
+
+    # Opt in to retrying ActionMailer::MailDeliveryJob on
+    # StandardCircuit::Mailer::CircuitOpenError (see Mailer::Retry). Accepts:
+    #
+    #   nil / false — (default) off; the gem installs nothing.
+    #   true        — MAILER_RETRY_DEFAULTS (wait: 90, attempts: 5, jitter: 0.15)
+    #   Hash        — MAILER_RETRY_DEFAULTS merged with :wait / :attempts /
+    #                 :jitter. `wait:` takes anything `retry_on` does (seconds,
+    #                 a Duration, :polynomially_longer, a Proc).
+    #
+    # The reader returns nil or a frozen, complete Hash.
+    def mailer_retry=(value)
+      @mailer_retry = normalize_mailer_retry(value)
     end
 
     # Opt in to criticality-aware Sentry reporting for the built-in Sentry
@@ -72,6 +92,7 @@ module StandardCircuit
       @circuits.clear
       @prefixes.clear
       @extra_notifiers.clear
+      @extra_notifier_keys.clear
     end
 
     def register(name, **opts)
@@ -94,16 +115,53 @@ module StandardCircuit
       spec
     end
 
+    # Register a circuit from a named preset (see StandardCircuit::Presets):
+    #
+    #   c.register_preset(:postmark)                  # c.register(:postmark, ...)
+    #   c.register_preset(:s3)                        # c.register_prefix(:s3, ...)
+    #   c.register_preset(:postmark, name: :mail, threshold: 5)
+    #
+    # +name:+ overrides the circuit name (or prefix); any other keyword is a
+    # `register` option that wins over the preset's value.
+    def register_preset(preset, name: preset, **overrides)
+      scope, opts = Presets.resolve(preset, **overrides)
+      scope == :prefix ? register_prefix(name, **opts) : register(name, **opts)
+    end
+
     # Register a host-supplied subscriber. Subscribers must respond to
     # `call(event_name, payload)` — Stoplight-shaped 4-arg notifiers from the
     # 0.1.x API are no longer accepted as extras (Logger / Sentry / Metrics
     # demonstrate the new shape).
-    def add_notifier(notifier)
+    #
+    # Idempotent: hosts call `configure` from `to_prepare`, which re-runs on
+    # every code reload, so re-adding "the same" notifier replaces the earlier
+    # entry in place instead of stacking a duplicate. "The same" means the same
+    # +key:+ when one is given, otherwise:
+    #
+    #   * a Proc / Method — same source location (a lambda re-created on reload)
+    #   * a Class / Module used directly — same name
+    #   * any other object — same class name (a reloaded class is a new class
+    #     object with the same name, so compare names, not classes)
+    #   * an instance of an anonymous class — never deduped
+    #
+    # The newest instance wins, so a reloaded notifier class takes effect.
+    # Pass distinct +key:+ values to register two instances of one class
+    # (e.g. two webhook notifiers pointed at different URLs).
+    def add_notifier(notifier, key: nil)
       unless notifier.respond_to?(:call)
         raise ArgumentError,
           "extra notifiers must respond to `call(event_name, payload)`; got #{notifier.class}"
       end
-      @extra_notifiers << notifier
+
+      identity = key.nil? ? notifier_identity(notifier) : [ :key, key ]
+      index = identity && @extra_notifier_keys.index(identity)
+      if index
+        @extra_notifiers[index] = notifier
+      else
+        @extra_notifiers << notifier
+        @extra_notifier_keys << identity
+      end
+      notifier
     end
 
     def spec_for(name)
@@ -121,6 +179,33 @@ module StandardCircuit
         raise ArgumentError,
           "sentry_criticality_levels must be nil, true, false, or a Hash of " \
           "criticality => Sentry level; got #{value.class}"
+      end
+    end
+
+    def notifier_identity(notifier)
+      if notifier.respond_to?(:source_location) && notifier.source_location
+        [ :source, notifier.source_location ]
+      elsif notifier.is_a?(Module)
+        notifier.name && [ :module, notifier.name ]
+      else
+        notifier.class.name && [ :class, notifier.class.name ]
+      end
+    end
+
+    def normalize_mailer_retry(value)
+      case value
+      when nil, false then nil
+      when true       then MAILER_RETRY_DEFAULTS
+      when Hash
+        options = value.transform_keys(&:to_sym)
+        unknown = options.keys - MAILER_RETRY_DEFAULTS.keys
+        unless unknown.empty?
+          raise ArgumentError,
+            "unknown mailer_retry option(s) #{unknown.inspect}; allowed: #{MAILER_RETRY_DEFAULTS.keys.inspect}"
+        end
+        MAILER_RETRY_DEFAULTS.merge(options).freeze
+      else
+        raise ArgumentError, "mailer_retry must be nil, true, false, or a Hash; got #{value.class}"
       end
     end
 

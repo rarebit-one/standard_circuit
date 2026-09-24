@@ -56,4 +56,13 @@ RSpec.describe ActiveStorage::Service::StandardCircuitS3Service do
       expect(captured).to eq([ :"s3_user-content", :"s3_system-assets" ])
     end
   end
+
+  describe "StandardCircuit::ActiveStorage::S3Service (deprecated alias)" do
+    it "still resolves to the service class and warns" do
+      allow(StandardCircuit.deprecator).to receive(:warn)
+
+      expect(StandardCircuit::ActiveStorage::S3Service).to be(described_class)
+      expect(StandardCircuit.deprecator).to have_received(:warn).with(/S3Service is deprecated/, anything)
+    end
+  end
 end
