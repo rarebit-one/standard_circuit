@@ -77,14 +77,51 @@ RSpec.describe StandardCircuit::Mailer::Retry do
         expect(described_class).not_to have_received(:report_exhausted)
       end
 
-      it "reports once attempts are exhausted instead of re-enqueuing" do
+      it "re-enqueues without raising on every attempt before the last" do
         described_class.install(job_class, options)
         job = build_job
 
-        options[:attempts].times { job.perform_now }
+        (options[:attempts] - 1).times { expect { job.perform_now }.not_to raise_error }
+
+        expect(enqueued_jobs.size).to eq(options[:attempts] - 1)
+        expect(described_class).not_to have_received(:report_exhausted)
+      end
+
+      it "reports, then re-raises once attempts are exhausted, so the job fails instead of being dropped" do
+        described_class.install(job_class, options)
+        job = build_job
+
+        (options[:attempts] - 1).times { job.perform_now }
+        expect { job.perform_now }.to raise_error(circuit_open)
 
         expect(enqueued_jobs.size).to eq(options[:attempts] - 1)
         expect(described_class).to have_received(:report_exhausted).with(job, circuit_open).once
+      end
+
+      it "fails the job through the adapter after the retries run out" do
+        stub_const("TestMailDeliveryJob", job_class) # retries deserialize by class name
+        described_class.install(job_class, options)
+
+        # The test adapter performs each enqueue (and each scheduled retry)
+        # immediately, the way a worker would pick them up.
+        adapter = ActiveJob::Base.queue_adapter
+        adapter.perform_enqueued_jobs = true
+        adapter.perform_enqueued_at_jobs = true
+
+        expect {
+          job_class.perform_later("UserMailer", "welcome", "deliver_now", args: [ 1 ])
+        }.to raise_error(StandardCircuit::Mailer::CircuitOpenError)
+
+        expect(performed_jobs.size).to eq(options[:attempts])
+        expect(described_class).to have_received(:report_exhausted).once
+      end
+
+      it "still re-raises the original error when reporting itself fails" do
+        allow(described_class).to receive(:report_exhausted).and_raise(RuntimeError, "sentry down")
+        described_class.install(job_class, options.merge(attempts: 1))
+
+        expect { build_job.perform_now }.to raise_error(circuit_open)
+        expect(logger).to have_received(:error).with(/failed to report mail retry exhaustion: RuntimeError: sentry down/)
       end
     end
   end

@@ -29,7 +29,9 @@ module StandardCircuit
     # On exhaustion: one error log line, a Sentry `:error` event (when
     # `sentry_enabled` and Sentry is initialized), and a
     # `standard_circuit.mailer.retries_exhausted` event. PII: recipient
-    # DOMAINS only — never addresses or subjects.
+    # DOMAINS only — never addresses or subjects. Then the CircuitOpenError is
+    # re-raised, so the job FAILS (dead letter) rather than completing with
+    # the email dropped (0.4.2; 0.4.0/0.4.1 swallowed it).
     module Retry
       EXHAUSTED_EVENT = "standard_circuit.mailer.retries_exhausted".freeze
       EXHAUSTED_MESSAGE = "Email delivery failed: mail circuit breaker retries exhausted".freeze
@@ -115,9 +117,30 @@ module StandardCircuit
             attempts: options.fetch(:attempts),
             jitter: options.fetch(:jitter)
           ) do |job, error|
-            StandardCircuit::Mailer::Retry.report_exhausted(job, error)
+            StandardCircuit::Mailer::Retry.exhausted!(job, error)
           end
           true
+        end
+
+        # Runs when the last attempt still hits an open circuit. Reports first
+        # (log, fingerprinted Sentry event, retries_exhausted event), then
+        # RE-RAISES so the job fails. ActiveJob's retry_on swallows the error
+        # when given a block unless the block raises, and a swallowed error
+        # means the job "succeeds" and the email is silently dropped. Raising
+        # lands it in the queue backend's failed executions (Solid Queue's
+        # dead letter), where it can be inspected and retried.
+        #
+        # A report that raises must not turn into a dropped email, so it is
+        # rescued and logged; the original error is raised regardless.
+        #
+        # @api private
+        def exhausted!(job, error)
+          begin
+            report_exhausted(job, error)
+          rescue StandardError => report_error
+            logger&.error("[standard_circuit] failed to report mail retry exhaustion: #{report_error.class}: #{report_error.message}")
+          end
+          raise error
         end
 
         def installed?(job_class)

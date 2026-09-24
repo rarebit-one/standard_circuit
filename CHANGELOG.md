@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-09-24
+
+### Fixed
+- **Exhausted mail jobs now fail (dead-letter) instead of being discarded.** `mailer_retry` installs `retry_on CircuitOpenError` with a block, and ActiveJob swallows the error when that block returns normally. So on exhaustion 0.4.0 and 0.4.1 logged, sent the Sentry event, emitted `standard_circuit.mailer.retries_exhausted`, and then let the job complete. The email was silently dropped, and nothing reached Solid Queue's failed executions, where it could have been retried. The handler now reports exactly as before and then re-raises the `CircuitOpenError`, so the job fails. Earlier attempts still re-enqueue with the configured wait. If reporting itself raises, that is logged and the original error is still re-raised. No config change.
+
+### Upgrade notes
+- **Expect one more Sentry event per exhausted email** if your host captures failed jobs (sentry-rails' ActiveJob integration does). It is the re-raised `CircuitOpenError`, grouped by exception class rather than by the `standard_circuit-mailer-retries-exhausted` fingerprint. The fingerprinted event is unchanged and is still the one to alert on. To keep only the fingerprinted event, drop the job-failure event in `before_send`. The gem does not set the fingerprint on the ambient Sentry scope, because outside a job's own scope (inline `perform_now`) it would leak onto unrelated events.
+- Failed mail jobs now accumulate in your queue backend's failed jobs (Solid Queue: `solid_queue_failed_executions`). Retry them once the provider is healthy, or discard them deliberately.
+
 ## [0.4.1] - 2026-09-24
 
 ### Fixed
