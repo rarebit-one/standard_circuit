@@ -104,6 +104,16 @@ _try_toplevel() {
   printf '%s' "$toplevel"
 }
 
+# _resolve_dir <base> <dir>
+# Prints the absolute directory `cd <dir>` would land in when run from <base>
+# (`~` expanded). Returns non-zero if either does not exist.
+_resolve_dir() {
+  local base="$1" dir="$2"
+  dir="${dir/#\~\//$HOME/}"
+  [[ "$dir" == "~" ]] && dir="$HOME"
+  (cd "$base" >/dev/null 2>&1 && cd "$dir" >/dev/null 2>&1 && pwd)
+}
+
 # resolve_push_root <command> <hook-input-json>
 #
 # Prints the absolute toplevel of the checkout the push targets.
@@ -114,14 +124,20 @@ _try_toplevel() {
 #
 # Candidate order (first one that resolves to a git checkout wins):
 #   1. the push segment's own `git -C <dir>`
-#   2. the last `cd <dir>` in a segment before the push
+#   2. where the `cd <dir>` segments before the push leave the shell
 #   3. the session cwd from the hook's stdin JSON (`.cwd`, with the
 #      nested `.context.cwd` shape as fallback), else the hook's $PWD
-# Relative paths in 1–2 resolve against 3, not the hook process's cwd.
-# Returns non-zero only if no candidate is inside a git checkout.
+# Each `cd` resolves against the directory the previous one left, starting
+# from 3 (so `cd .. && cd sibling && git push` lands in ../sibling), and a
+# relative -C resolves against that same directory. A `cd` that cannot be
+# resolved (`cd -`, an unexpanded $VAR) makes the directory unknown until a
+# later absolute `cd`; an unknown directory falls through to 3.
+# An explicit -C that does not resolve returns non-zero: git itself exits
+# with "cannot change to" there, so no fallback checkout may be touched.
+# Returns non-zero if no candidate is inside a git checkout.
 resolve_push_root() {
   local command="$1" input="$2"
-  local session_cwd base seg dir last_cd="" push_seg="" toplevel
+  local session_cwd base seg dir eff eff_known saw_cd=0 push_seg="" toplevel
 
   session_cwd=$(printf '%s' "$input" | jq -r '.cwd // .context.cwd // ""' 2>/dev/null) \
     || session_cwd=""
@@ -136,43 +152,66 @@ resolve_push_root() {
     echo "   input schema likely changed — see resolve_push_root in pre-push-prepare.sh." >&2
   fi
   base="${session_cwd:-$PWD}"
+  eff="$base"
+  eff_known=1
 
-  # Split into segments. Separators inside quoted arguments split too, but
-  # the resulting fragments simply fail the cd/push matches below.
+  # Split into list items on `&&`, `||`, `;` and newlines, then each item into
+  # its pipeline stages. Separators inside quoted arguments split too, but the
+  # resulting fragments simply fail the cd/push matches below.
   local normalized="${command//&&/$'\n'}"
+  normalized="${normalized//||/$'\n'}"
   normalized="${normalized//;/$'\n'}"
-  normalized="${normalized//|/$'\n'}"
 
-  while IFS= read -r seg; do
-    if _seg_is_push "$seg"; then
-      push_seg="$seg"
-      break
-    fi
-    if [[ "$seg" =~ ^[[:space:]]*cd[[:space:]] ]]; then
-      dir=$(_extract_dir_arg "$seg" '^[[:space:]]*cd')
-      # `cd -` means OLDPWD *of the interactive shell*, which this process
-      # cannot know. Resolving it here would land on the hook's own cwd —
-      # the main checkout — silently reinstating the afb#745 bug. Ignore it
-      # and let resolution fall through to the session cwd.
-      [[ -n "$dir" && "$dir" != "-" ]] && last_cd="$dir"
-    fi
+  local item piped stages
+  while IFS= read -r item; do
+    # every stage of a pipeline runs in a subshell, so a `cd` there does not
+    # move the shell (review finding: `cd /tmp | cat; cd repo` is ./repo)
+    piped=0
+    [[ "$item" == *"|"* ]] && piped=1
+    stages="${item//|/$'\n'}"
+    while IFS= read -r seg; do
+      if _seg_is_push "$seg"; then
+        push_seg="$seg"
+        break 2
+      fi
+      if [[ "$piped" == 0 && "$seg" =~ ^[[:space:]]*cd[[:space:]] ]]; then
+        dir=$(_extract_dir_arg "$seg" '^[[:space:]]*cd')
+        # `cd -` means OLDPWD *of the interactive shell*, which this process
+        # cannot know. Resolving it here would land on the hook's own cwd —
+        # the main checkout — silently reinstating the afb#745 bug. Ignore it
+        # and let resolution fall through to the session cwd.
+        saw_cd=1
+        # chained cds compose: each resolves against where the previous one left
+        # the shell (review finding: `cd .. && cd sibling` resolved cwd/sibling).
+        # A relative cd from an unknown directory stays unknown; an absolute one
+        # (or ~) re-anchors.
+        if [[ -z "$dir" || "$dir" == "-" ]]; then
+          eff_known=0
+        elif [[ "$eff_known" == 1 ]]; then
+          eff=$(_resolve_dir "$eff" "$dir") || eff_known=0
+        elif [[ "$dir" == /* || "$dir" == "~" || "$dir" == "~/"* ]]; then
+          eff=$(_resolve_dir / "$dir") && eff_known=1
+        fi
+      fi
+    done <<<"$stages"
   done <<<"$normalized"
 
   if [[ -n "$push_seg" ]]; then
     dir=$(_extract_dir_arg "$push_seg" '-C')
-    # a relative -C is relative to wherever the preceding `cd` left the shell
-    local cbase="$base"
-    if [[ -n "$last_cd" && "$dir" != /* ]]; then
-      local d="${last_cd/#\~\//$HOME/}"
-      cbase=$(cd "$base" >/dev/null 2>&1 && cd "$d" >/dev/null 2>&1 && pwd) || cbase="$base"
-    fi
-    if [[ -n "$dir" ]] && toplevel=$(_try_toplevel "$cbase" "$dir"); then
+    if [[ -n "$dir" ]]; then
+      # a relative -C is relative to wherever the preceding cds left the shell
+      local cbase="$base"
+      [[ "$eff_known" == 1 ]] && cbase="$eff"
+      # an explicit -C that does not resolve is final: git exits with
+      # "cannot change to" there, so falling back would act on a checkout
+      # the command never touches (review finding)
+      toplevel=$(_try_toplevel "$cbase" "$dir") || return 1
       printf '%s' "$toplevel"
       return 0
     fi
   fi
 
-  if [[ -n "$last_cd" ]] && toplevel=$(_try_toplevel "$base" "$last_cd"); then
+  if [[ "$saw_cd" == 1 && "$eff_known" == 1 ]] && toplevel=$(_try_toplevel "$eff" "."); then
     printf '%s' "$toplevel"
     return 0
   fi
