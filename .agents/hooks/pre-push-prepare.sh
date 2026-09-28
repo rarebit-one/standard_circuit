@@ -117,24 +117,27 @@ _resolve_dir() {
 # resolve_push_root <command> <hook-input-json>
 #
 # Prints the absolute toplevel of the checkout the push targets.
-# The command is split into segments on `&&`, `;`, `|`, and newlines, and
-# only the segment that IS the push (git … push / gh pr create) plus the
-# segments before it are consulted — a `git -C` on some other invocation,
-# or a `cd` that runs after the push, never selects the root.
+# The command is split into list items on `&&`, `||`, `;` and newlines, and
+# each item into its pipeline stages. Only the stage that IS the push
+# (git … push / gh pr create) plus what comes before it is consulted — a
+# `git -C` on some other invocation, or a `cd` that runs after the push,
+# never selects the root. A `cd` inside a pipeline stage runs in a subshell
+# and is ignored.
 #
-# Candidate order (first one that resolves to a git checkout wins):
+# Resolution (the first that applies decides; there is no fallback between
+# them, because each fallback is a checkout the push never runs in):
 #   1. the push segment's own `git -C <dir>`
 #   2. where the `cd <dir>` segments before the push leave the shell
-#   3. the session cwd from the hook's stdin JSON (`.cwd`, with the
-#      nested `.context.cwd` shape as fallback), else the hook's $PWD
+#   3. with no cd: the session cwd from the hook's stdin JSON (`.cwd`, with
+#      the nested `.context.cwd` shape as fallback), else the hook's $PWD
 # Each `cd` resolves against the directory the previous one left, starting
 # from 3 (so `cd .. && cd sibling && git push` lands in ../sibling), and a
-# relative -C resolves against that same directory. A `cd` that cannot be
-# resolved (`cd -`, an unexpanded $VAR) makes the directory unknown until a
-# later absolute `cd`; an unknown directory falls through to 3.
-# An explicit -C that does not resolve returns non-zero: git itself exits
-# with "cannot change to" there, so no fallback checkout may be touched.
-# Returns non-zero if no candidate is inside a git checkout.
+# relative -C resolves against that same directory. A literal `cd` to a
+# missing dir fails in bash and leaves the directory as it was; one this
+# process cannot follow (`cd -`, a runtime $VAR or glob) makes it unknown
+# until a later absolute `cd` re-anchors it.
+# Returns non-zero (the hook then skips; it never blocks) when the chosen
+# candidate is unknown or not inside a git checkout.
 resolve_push_root() {
   local command="$1" input="$2"
   local session_cwd base seg dir eff eff_known saw_cd=0 push_seg="" toplevel
@@ -185,10 +188,18 @@ resolve_push_root() {
         # the shell (review finding: `cd .. && cd sibling` resolved cwd/sibling).
         # A relative cd from an unknown directory stays unknown; an absolute one
         # (or ~) re-anchors.
+        local lit=1 next
+        [[ "$dir" == *[\$\`*?]* ]] && lit=0
         if [[ -z "$dir" || "$dir" == "-" ]]; then
           eff_known=0
         elif [[ "$eff_known" == 1 ]]; then
-          eff=$(_resolve_dir "$eff" "$dir") || eff_known=0
+          if next=$(_resolve_dir "$eff" "$dir"); then
+            eff="$next"
+          elif [[ "$lit" == 0 ]]; then
+            eff_known=0
+          fi
+          # a literal target that does not exist: bash's cd fails and leaves
+          # the shell where it was, so eff stands (review finding)
         elif [[ "$dir" == /* || "$dir" == "~" || "$dir" == "~/"* ]]; then
           eff=$(_resolve_dir / "$dir") && eff_known=1
         fi
@@ -211,7 +222,14 @@ resolve_push_root() {
     fi
   fi
 
-  if [[ "$saw_cd" == 1 && "$eff_known" == 1 ]] && toplevel=$(_try_toplevel "$eff" "."); then
+  if [[ "$saw_cd" == 1 ]]; then
+    # a cd ran before the push: the push happens wherever it left the shell.
+    # If that is unknown (`cd -`, `cd "$WORKTREE"`) or not a checkout, fail
+    # rather than fall back to the session cwd, which is a different checkout
+    # than the one being pushed (review finding). Failing makes the hook skip;
+    # it never blocks the push.
+    [[ "$eff_known" == 1 ]] || return 1
+    toplevel=$(_try_toplevel "$eff" ".") || return 1
     printf '%s' "$toplevel"
     return 0
   fi
