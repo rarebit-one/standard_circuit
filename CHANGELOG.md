@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `fallback: -> { ... }` raised `ArgumentError` at exactly the moment the
   circuit opened, the case the fallback exists for. Such lambdas are now called
   without the argument. Fallbacks that take the error, and procs, are
-  unchanged. Found in one estate app, where four call sites would have crashed.
+  unchanged. Zero-arity `Method` fallbacks are accepted the same way.
 
 ### Changed
 

@@ -78,10 +78,12 @@ module StandardCircuit
     # circuit is forced open. A zero-argument lambda (`-> { ... }`, the
     # natural way to write "return this instead") raises ArgumentError on that
     # call, so the fallback would crash at exactly the moment the circuit
-    # opens. Accept it by calling it without the argument. Procs and lambdas
-    # that take the error are passed through unchanged.
+    # opens. Accept it, and a zero-arity Method (`fallback: method(:degraded)`),
+    # by calling it without the argument. Procs, and callables that take the
+    # error, are passed through unchanged.
     def accept_error_argument(fallback)
-      return fallback unless fallback.respond_to?(:lambda?) && fallback.lambda? && fallback.arity.zero?
+      strict = fallback.is_a?(Method) || (fallback.is_a?(Proc) && fallback.lambda?)
+      return fallback unless strict && fallback.arity.zero?
 
       ->(_error) { fallback.call }
     end
