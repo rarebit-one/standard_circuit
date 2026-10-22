@@ -61,8 +61,9 @@ StandardCircuit.run(:analytics, fallback: -> { nil }) do
 end
 ```
 
-A fallback may take the error (`->(error) { ... }`, `nil` when the circuit is
-forced open) or take nothing (`-> { ... }`); both are called correctly.
+A fallback may take the error (`->(error) { ... }`: the error the block raised,
+or `nil` once the circuit is open, since the block then never runs) or take
+nothing (`-> { ... }`, or a zero-arity `method(...)`); all are called correctly.
 
 ## Error taxonomies
 

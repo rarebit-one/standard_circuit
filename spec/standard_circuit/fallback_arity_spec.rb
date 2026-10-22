@@ -37,13 +37,39 @@ RSpec.describe StandardCircuit, ".run fallbacks of any arity" do
     end
   end
 
-  it "still passes the error to a fallback that takes it" do
+  # Stoplight hands the fallback the error the block raised. Once the circuit
+  # is red the block never runs, so there is no error and it gets nil.
+  it "passes the block's error to a fallback that takes it" do
+    received = :unset
+
+    described_class.run(:flaky, fallback: ->(error) { received = error }) { raise "boom" }
+
+    expect(received).to be_a(RuntimeError).and(have_attributes(message: "boom"))
+  end
+
+  it "passes nil to a fallback that takes it once the circuit is red" do
+    trip!
+    received = :unset
+
+    described_class.run(:flaky, fallback: ->(error) { received = error }) { :block }
+
+    expect(received).to be_nil
+  end
+
+  it "passes nil to a fallback that takes it, when forced open" do
     received = :unset
     described_class.force_open(:flaky) do
       described_class.run(:flaky, fallback: ->(error) { received = error }) { :block }
     end
 
     expect(received).to be_nil
+  end
+
+  it "accepts a zero-arity Method as the fallback" do
+    holder = Class.new { def degraded = :fallback }.new
+    trip!
+
+    expect(described_class.run(:flaky, fallback: holder.method(:degraded)) { :block }).to eq(:fallback)
   end
 
   it "runs the block, not the fallback, while the circuit is closed" do
