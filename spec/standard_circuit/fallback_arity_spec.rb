@@ -1,6 +1,7 @@
 require "spec_helper"
 
-# A fallback is called with the error (or nil when forced open). Hosts write
+# A fallback is called with one argument: the error the block raised, or nil
+# when the block never ran (the circuit is red or forced open). Hosts write
 # "return this instead" as a zero-argument lambda, which would raise
 # ArgumentError on that call at exactly the moment the circuit opens.
 RSpec.describe StandardCircuit, ".run fallbacks of any arity" do
@@ -63,6 +64,14 @@ RSpec.describe StandardCircuit, ".run fallbacks of any arity" do
     end
 
     expect(received).to be_nil
+  end
+
+  it "passes the error through to a Method that takes it" do
+    holder = Class.new { def degraded(error) = error }.new
+
+    result = described_class.run(:flaky, fallback: holder.method(:degraded)) { raise "boom" }
+
+    expect(result).to be_a(RuntimeError).and(have_attributes(message: "boom"))
   end
 
   it "accepts a zero-arity Method as the fallback" do
