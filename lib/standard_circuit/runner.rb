@@ -12,6 +12,7 @@ module StandardCircuit
     end
 
     def run(name, fallback: nil, &block)
+      fallback = accept_error_argument(fallback)
       forced = @forced_states[name.to_sym]
       return run_forced_open(name, fallback) if forced == :open
       return yield if forced == :closed
@@ -72,6 +73,18 @@ module StandardCircuit
     end
 
     private
+
+    # A fallback is called with one argument: the error, or nil when the
+    # circuit is forced open. A zero-argument lambda (`-> { ... }`, the
+    # natural way to write "return this instead") raises ArgumentError on that
+    # call, so the fallback would crash at exactly the moment the circuit
+    # opens. Accept it by calling it without the argument. Procs and lambdas
+    # that take the error are passed through unchanged.
+    def accept_error_argument(fallback)
+      return fallback unless fallback.respond_to?(:lambda?) && fallback.lambda? && fallback.arity.zero?
+
+      ->(_error) { fallback.call }
+    end
 
     def execute(name, fallback, &block)
       started_at = monotonic_now

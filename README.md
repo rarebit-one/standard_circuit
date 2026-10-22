@@ -54,7 +54,15 @@ end
 StandardCircuit.run(:stripe) do
   Stripe::PaymentIntent.create(amount:, currency:)
 end
+
+# with a fallback, returned instead of raising while the circuit is open
+StandardCircuit.run(:analytics, fallback: -> { nil }) do
+  Analytics.track(event)
+end
 ```
+
+A fallback may take the error (`->(error) { ... }`, `nil` when the circuit is
+forced open) or take nothing (`-> { ... }`); both are called correctly.
 
 ## Error taxonomies
 
