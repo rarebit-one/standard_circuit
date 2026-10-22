@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Zero-argument fallback lambdas no longer crash when the circuit opens.**
+  A fallback is called with the error (or `nil` when forced open), so a
+  `fallback: -> { ... }` raised `ArgumentError` at exactly the moment the
+  circuit opened, the case the fallback exists for. Such lambdas are now called
+  without the argument. Fallbacks that take the error, and procs, are
+  unchanged. Found in one estate app, where four call sites would have crashed.
+
 ### Changed
 
 - **Requires Rails 8.1** (`railties`, `actionmailer`, `actionpack` `>= 8.1`,
