@@ -3,7 +3,7 @@ require_relative "lib/standard_circuit/version"
 Gem::Specification.new do |spec|
   spec.name        = "standard_circuit"
   spec.version     = StandardCircuit::VERSION
-  spec.authors     = [ "Jaryl Sim" ]
+  spec.authors     = [ "Rarebit One" ]
   spec.email       = [ "code@jaryl.dev" ]
   spec.homepage    = "https://github.com/rarebit-one/standard_circuit"
   spec.summary     = "Circuit breaker primitives for Rails apps, built on stoplight."
