@@ -31,15 +31,20 @@ module StandardCircuit
 
     private
 
+    # Colors go out as Strings ("green"), as they did under stoplight 5;
+    # stoplight 6 hands us Symbols. The error is attached only to the
+    # GREEN -> RED trip: stoplight 5 never passed one for a failed recovery
+    # probe (YELLOW -> RED) and stoplight 6 does, which would add keys to the
+    # `circuit.opened` payload.
     def payload_for(light, from_color, to_color, error)
       spec = @config.spec_for(light.name)
       payload = {
         circuit: light.name,
-        from_color: from_color,
-        to_color: to_color,
+        from_color: from_color.to_s,
+        to_color: to_color.to_s,
         criticality: spec&.criticality
       }
-      if error
+      if error && from_color.to_s == Stoplight::Color::GREEN.to_s
         payload[:error_class] = error.class.name
         payload[:error_message] = error.message
       end

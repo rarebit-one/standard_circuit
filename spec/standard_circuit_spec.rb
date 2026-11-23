@@ -160,9 +160,9 @@ RSpec.describe StandardCircuit do
       call_count = Concurrent::AtomicFixnum.new(0)
       original_build = runner.method(:build_light)
 
-      allow(runner).to receive(:build_light) do |name|
+      allow(runner).to receive(:build_light) do |*args|
         call_count.increment
-        original_build.call(name)
+        original_build.call(*args)
       end
 
       futures = Array.new(100) { Concurrent::Future.execute { runner.light_for(:parallel) } }
@@ -183,11 +183,11 @@ RSpec.describe StandardCircuit do
 
     it "swaps a fresh Memory data store so failure counters don't persist" do
       expect { described_class.run(:flaky) { raise "boom" } }.to raise_error(RuntimeError)
-      expect(described_class.runner.light_for(:flaky).color).to eq("red")
+      expect(described_class.runner.light_for(:flaky).color).to eq(Stoplight::Color::RED)
 
       described_class.reset!
 
-      expect(described_class.runner.light_for(:flaky).color).to eq("green")
+      expect(described_class.runner.light_for(:flaky).color).to eq(Stoplight::Color::GREEN)
     end
 
     it "preserves a non-Memory data store (e.g. Redis in production)" do

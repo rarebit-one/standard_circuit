@@ -1,14 +1,21 @@
 module StandardCircuit
   class Runner
+    # Name of the Stoplight system that owns every light this gem builds. It
+    # namespaces Redis keys (`stoplight:v6:<system id>:...`), so it must stay
+    # stable across processes and deploys.
+    SYSTEM_NAME = "standard_circuit"
+
     def initialize
       @lights = Concurrent::Map.new
       @forced_states = Concurrent::Map.new
       @config = Config.new
+      @system_mutex = Mutex.new
+      @system_entry = nil
     end
 
     def apply_config!(config)
       @config = config
-      @lights.clear
+      discard_system!
     end
 
     def run(name, fallback: nil, &block)
@@ -39,16 +46,20 @@ module StandardCircuit
     # into later specs. We only swap the store when the existing one is already
     # a Memory store, because replacing a Redis store (production config) would
     # silently defeat shared-process coordination.
+    #
+    # Under stoplight 6 a Memory store is only a marker: each light keeps its
+    # own counters, and a Stoplight system hands back the same cached light for
+    # a name forever. So a fresh store also means a fresh system (see #system).
     def reset!
-      @lights.clear
       @forced_states.clear
-      return unless @config.data_store.is_a?(Stoplight::DataStore::Memory)
-
-      @config.data_store = Stoplight::DataStore::Memory.new
+      @config.data_store = Stoplight::DataStore::Memory.new if @config.data_store.is_a?(Stoplight::DataStore::Memory)
+      discard_system!
     end
 
     def light_for(name)
-      @lights.compute_if_absent(name.to_sym) { build_light(name.to_sym) }
+      key = name.to_sym
+      current_system = system
+      @lights.compute_if_absent(key) { build_light(current_system, key) }
     end
 
     # Snapshot Hash of the current cached lights. Used by Health to discover
@@ -91,8 +102,12 @@ module StandardCircuit
     def execute(name, fallback, &block)
       started_at = monotonic_now
       light = light_for(name)
+      spec = @config.spec_for(name)
 
-      result = fallback ? light.run(fallback, &block) : light.run(&block)
+      # The spec's error lists go in per run, which stoplight 6 still accepts
+      # for any `===` matcher (procs, anonymous classes) — at registration it
+      # only takes named classes/modules. See #build_light.
+      result = light.run(fallback, tracked_errors: spec.tracked_errors, skipped_errors: spec.skipped_errors, &block)
       duration = duration_ms(started_at)
       emit_request_metric(name, :success, duration)
       emit_run_completed(name, status: :success, duration_ms: duration)
@@ -145,19 +160,69 @@ module StandardCircuit
       @forced_states[key] = state
     end
 
-    def build_light(name)
+    # The Stoplight system for the current config and data store, built on
+    # first use. A data store swapped in after `configure` (as #reset! does,
+    # or a host assigning `config.data_store` directly) gets a new system, the
+    # same way 5.x lights picked up `@config.data_store` when they were built.
+    def system
+      entry = @system_entry
+      return entry.last if entry && entry.first.equal?(@config.data_store)
+
+      @system_mutex.synchronize do
+        store = @config.data_store
+        unless @system_entry&.first.equal?(store)
+          @lights.clear
+          @system_entry = [ store, build_system(store) ].freeze
+        end
+        @system_entry.last
+      end
+    end
+
+    def discard_system!
+      @system_mutex.synchronize do
+        @system_entry = nil
+        @lights.clear
+      end
+    end
+
+    # Stoplight 6 caches one light per name inside a system and refuses to
+    # re-register a name with different settings, and its public
+    # `register_system` refuses to reuse a system name. Neither fits a runner
+    # that is reconfigured on every code reload and reset between specs, so
+    # each system gets its own Stoplight state rather than living in the
+    # process-global one. That also keeps it apart from a host's own
+    # `Stoplight.configure`.
+    def build_system(data_store)
+      state = Stoplight::Wiring::GlobalState.new(
+        default_config: Stoplight::Wiring::DefaultConfiguration.new.to_config!
+      )
+      state.register_system(SYSTEM_NAME, data_store: data_store, notifiers: [ NotifierBridge.new(@config) ])
+    end
+
+    def build_light(system, name)
       spec = @config.spec_for(name) or raise UnknownCircuit, "no circuit registered for #{name.inspect}"
 
-      Stoplight.light(
+      system.register(
         name.to_s,
         threshold: spec.threshold,
-        cool_off_time: spec.cool_off_time,
-        window_size: spec.window_size,
-        tracked_errors: spec.tracked_errors,
-        skipped_errors: spec.skipped_errors,
-        data_store: @config.data_store,
-        notifiers: [ NotifierBridge.new(@config) ]
+        cool_off_time: whole_seconds(spec.cool_off_time),
+        window_size: whole_seconds(spec.window_size),
+        **registrable_errors(spec)
       )
+    end
+
+    # Stoplight 6 takes only whole seconds, at least 1, for both durations.
+    def whole_seconds(value)
+      value && [ value.ceil, 1 ].max
+    end
+
+    # Registration accepts named classes/modules only. Lists that qualify are
+    # registered so a light used directly (`light_for(name).run`) still sees
+    # them; #execute passes both lists on every run regardless.
+    def registrable_errors(spec)
+      { tracked_errors: spec.tracked_errors, skipped_errors: spec.skipped_errors }.select do |_, errors|
+        errors.all? { |matcher| matcher.is_a?(Module) && matcher.name }
+      end
     end
 
     def emit_request_metric(name, status, duration)

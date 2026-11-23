@@ -139,6 +139,8 @@ StandardCircuit.configure do |c|
 end
 ```
 
+StandardCircuit keeps its circuits in its own Stoplight system, named `standard_circuit`, separate from the process-global one a host configures with `Stoplight.configure`. So `Stoplight.light("stripe")` does not find a StandardCircuit circuit, and a host's own `Stoplight.configure` does not change StandardCircuit's store or notifiers. With Redis, keys are namespaced `stoplight:v6:<standard_circuit system id>:...`; stoplight 6 needs Redis 7.4+ (or Valkey 7.2+).
+
 ## Sentry reporting
 
 The built-in Sentry subscriber is on by default (`c.sentry_enabled = true`) and reports every circuit-open transition at a flat `:warning`, with the circuit name, colors, and error in `extra`.
