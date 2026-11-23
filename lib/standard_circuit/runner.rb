@@ -5,10 +5,10 @@ module StandardCircuit
     # stable across processes and deploys.
     SYSTEM_NAME = "standard_circuit"
 
-    def initialize
+    def initialize(config = Config.new)
       @lights = Concurrent::Map.new
       @forced_states = Concurrent::Map.new
-      @config = Config.new
+      @config = config
       @system_mutex = Mutex.new
       @system_entry = nil
     end

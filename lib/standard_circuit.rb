@@ -53,8 +53,12 @@ module StandardCircuit
       @config ||= Config.new
     end
 
+    # Bound to +config+ from the start, not only from the first `configure`:
+    # otherwise a circuit registered straight on `StandardCircuit.config` is
+    # visible to `dependency` and `health_report` readers of the config but
+    # unknown to `run` until something calls `configure`.
     def runner
-      @runner ||= Runner.new
+      @runner ||= Runner.new(config)
     end
 
     def subscribers
