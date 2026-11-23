@@ -20,6 +20,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `StandardCircuit.dependency(name)` and `StandardCircuit.dependencies` return
   read-only handles (name, criticality, purposes, circuit names). An unknown
   name raises `UnknownDependency`, a subclass of `UnknownCircuit`.
+- **State and locks on dependencies.** `dependency(name).open?`, `.status`
+  (`:ok | :degraded | :unavailable`, the worst purpose under the
+  `health_report` rule), `.circuits`, and `.lock_open!` / `.lock_closed!` /
+  `.unlock!`, plus the same per purpose (`dependency(name).purpose(p).open?`).
+  `lock_open!` is the supported replacement for
+  `runner.light_for(name).lock(Stoplight::Color::RED)`. Forced states count.
+  State is per process with the default `Memory` store.
 - `register`, `register_prefix` and `register_preset` also create a breaker-only
   dependency with one implicit `:default` purpose, so circuits registered the
   old way show up through the new API. A prefix registration is one dependency

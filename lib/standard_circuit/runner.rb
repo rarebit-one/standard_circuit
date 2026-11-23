@@ -66,6 +66,27 @@ module StandardCircuit
       @lights.compute_if_absent(key) { build_light(current_system, key) }
     end
 
+    # One circuit's current state: the light's own +color+ and +locked+ (as
+    # health_report shows them) plus any +forced+ override (:open / :closed)
+    # from force_open / force_closed.
+    def circuit_state(name)
+      key = name.to_sym
+      light = light_for(key)
+      { name: key, color: light.color.to_s, locked: Health.locked?(light, @config), forced: @forced_states[key] }
+    end
+
+    # Lock a circuit's light open (red) or closed (green) until #unlock. The
+    # lock lives in the data store: per process with Memory, shared by every
+    # process with Redis.
+    def lock(name, state)
+      color = { open: Stoplight::Color::RED, closed: Stoplight::Color::GREEN }.fetch(state)
+      light_for(name).lock(color)
+    end
+
+    def unlock(name)
+      light_for(name).unlock
+    end
+
     # Snapshot Hash of the current cached lights. Used by Health to discover
     # prefix-matched circuits that have been exercised at least once — we can't
     # enumerate prefix-matched dynamic names any other way.

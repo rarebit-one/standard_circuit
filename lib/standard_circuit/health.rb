@@ -38,14 +38,25 @@ module StandardCircuit
     #
     # :optional circuits never elevate the overall state.
     def overall(snapshot)
-      return :critical if snapshot.any? { |e| e[:criticality] == :critical && e[:color] == "red" }
+      severities = snapshot.map { |e| severity(e[:criticality], e[:color]) }
+      return :critical if severities.include?(:unavailable)
 
-      degraded = snapshot.any? do |e|
-        (e[:criticality] == :critical && e[:color] == "yellow") ||
-          (e[:criticality] == :standard && e[:color] == "red")
-      end
+      severities.include?(:degraded) ? :degraded : :ok
+    end
 
-      degraded ? :degraded : :ok
+    # The per-circuit form of the +overall+ rule, also used for dependency and
+    # purpose status: :unavailable | :degraded | :ok.
+    def severity(criticality, color)
+      return :unavailable if criticality == :critical && color == "red"
+      return :degraded if (criticality == :critical && color == "yellow") || (criticality == :standard && color == "red")
+
+      :ok
+    end
+
+    # @api private — also used by Runner#circuit_state.
+    def locked?(light, config)
+      state = safe_state(light, config)
+      state == Stoplight::State::LOCKED_RED || state == Stoplight::State::LOCKED_GREEN
     end
 
     # --- internals -------------------------------------------------------
@@ -79,12 +90,6 @@ module StandardCircuit
       }
     end
     private_class_method :build_entry
-
-    def locked?(light, config)
-      state = safe_state(light, config)
-      state == Stoplight::State::LOCKED_RED || state == Stoplight::State::LOCKED_GREEN
-    end
-    private_class_method :locked?
 
     # Reading +light.state+ can raise when the data store is unreachable
     # (e.g. Redis connection dropped). Swallow the failure so the health

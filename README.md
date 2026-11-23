@@ -192,6 +192,42 @@ c.dependency :google_maps, criticality: :optional do |d|
 end
 ```
 
+### State and locks
+
+```ruby
+dep = StandardCircuit.dependency(:myinfo)
+dep.open?          # true while its breaker is open (red, or force_open); half-open (yellow) is not open
+dep.status         # :ok | :degraded | :unavailable
+dep.circuits       # [{ name: :myinfo, color: "red", locked: false, forced: nil }]
+dep.lock_open!     # every call raises RedLight (or returns its fallback) until unlock!
+dep.lock_closed!   # every call goes through, failures never trip it
+dep.unlock!
+
+dep = StandardCircuit.dependency(:google_maps)
+dep.purpose(:address).open?        # an isolated purpose has its own breaker
+dep.purpose(:address).status
+dep.purpose(:address).lock_open!   # locks only :google_maps_address
+```
+
+- `status` takes the worst purpose. Each purpose applies the `health_report` rule to its own criticality and breaker color: critical + red is `:unavailable`; critical + yellow or standard + red is `:degraded`; optional never elevates. A red shared breaker therefore makes `:google_oauth` unavailable through `:sign_in`, even though `:calendar` alone would only be degraded. Error rate and latency don't affect `status`.
+- A dependency is `open?` when no purpose can be served, meaning every purpose's breaker is open. For the usual one-breaker dependency that is simply "its breaker is open". `force_open` / `force_closed` count, as they do for `run`. `circuits` shows the light's own `color` and the `forced` override side by side.
+- Locking through a purpose that shares the dependency's breaker locks that breaker for every purpose sharing it. A prefix dependency (`register_prefix(:s3)`) locks the `s3_*` sub-circuits used so far in the process, and is `open?` only when all of them are open.
+- State is **per process** with the default `Memory` store, like everything else here (see `data_store` below). With a Redis store, locks are shared by every process, which makes `lock_open!` a fleet-wide switch.
+
+Replace your host code with:
+
+```ruby
+# Before: reaching into the runner
+StandardCircuit.runner.light_for(:stripe).lock(Stoplight::Color::RED)
+StandardCircuit.runner.light_for(:stripe).unlock
+StandardCircuit.runner.light_for(:myinfo).color == Stoplight::Color::RED
+
+# After
+StandardCircuit.dependency(:stripe).lock_open!
+StandardCircuit.dependency(:stripe).unlock!
+StandardCircuit.dependency(:myinfo).open?
+```
+
 ## Circuit state storage (`data_store`)
 
 Circuit state (failure counts, colors, locks) lives in a Stoplight data store. StandardCircuit defaults to `Stoplight::DataStore::Memory.new`, which is **per-process**: each Puma worker, Sidekiq/SolidQueue worker, and console gets its own independent view of every circuit.
@@ -431,6 +467,7 @@ These are supported public API for host test suites, not internals:
 | `StandardCircuit.force_open(name) { ... }` | Treat `name` as open for the block (or until `reset_force!` without a block): `run` raises `Stoplight::Error::RedLight`, or returns the fallback. Emits the same `run.completed` / `fallback_invoked` events as a real open circuit. |
 | `StandardCircuit.force_closed(name) { ... }` | Bypass the circuit for the block — `run` just yields. No events. |
 | `StandardCircuit.reset_force!` | Clear every forced state. |
+| `StandardCircuit.dependency(name).lock_open!` / `lock_closed!` / `unlock!` | Lock every breaker behind a dependency (or `.purpose(p).lock_open!` for one purpose's breaker) in the data store. Unlike `force_open`, the circuit really is locked red, so `health_report` shows it `locked: true`. `reset!` clears it with the `Memory` store. |
 | `StandardCircuit.reset!` | Clear the light cache and forced states, and swap in a fresh `Memory` data store (left alone when the store is Redis). |
 | `require "standard_circuit/rspec"` | Adds a `before(:each)` that runs `reset!` and tears down subscribers. Circuit registrations are kept. |
 
