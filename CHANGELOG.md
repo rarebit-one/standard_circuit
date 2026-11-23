@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `StandardCircuit.runner` is bound to `StandardCircuit.config` from the start.
+  It used to hold a private `Config` until the first `configure`, so a circuit
+  registered straight on `StandardCircuit.config` was unknown to
+  `StandardCircuit.run` (and missing from `health_report`) until something
+  called `configure`. Apps that configure in an initializer never saw this;
+  it made one spec order-dependent.
+
 ## [0.7.0] - 2026-11-23
 
 First step from circuit breakers towards dependency management: a registry of

@@ -173,6 +173,25 @@ RSpec.describe StandardCircuit do
     end
   end
 
+  describe ".runner" do
+    around do |example|
+      saved = described_class.instance_variable_get(:@runner)
+      described_class.instance_variable_set(:@runner, nil)
+      example.run
+    ensure
+      described_class.instance_variable_set(:@runner, saved)
+    end
+
+    # Regression: the runner used to hold a private Config until the first
+    # `configure`, so this raised UnknownCircuit depending on spec order.
+    it "runs circuits registered on StandardCircuit.config before configure is ever called" do
+      described_class.config.register(:early)
+
+      expect(described_class.runner.instance_variable_get(:@config)).to be(described_class.config)
+      expect(described_class.run(:early) { :ok }).to eq(:ok)
+    end
+  end
+
   describe ".reset!" do
     before do
       described_class.configure do |c|
