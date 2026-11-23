@@ -21,7 +21,7 @@ Gem::Specification.new do |spec|
 
   spec.required_ruby_version = ">= 4.0"
 
-  spec.add_dependency "stoplight", "~> 5.8"
+  spec.add_dependency "stoplight", "~> 6.0", ">= 6.0.1"
   spec.add_dependency "concurrent-ruby", "~> 1.3"
   spec.add_dependency "sentry-ruby", ">= 5.17"
   spec.add_dependency "railties", ">= 8.1"

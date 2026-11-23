@@ -73,7 +73,9 @@ end
 
 ### Runner
 
-`StandardCircuit::Runner` caches `Stoplight::Light` instances in a `Concurrent::Map`, applies forced-state overrides (`force_open`, `force_closed`), and emits `external.request` count + duration metrics on every call. `reset!` swaps in a fresh `Memory` data store between specs but leaves Redis stores alone. `light_for(name)` builds-on-demand and is used by `Health.snapshot` to materialize named circuits eagerly.
+`StandardCircuit::Runner` registers lights in its own stoplight 6 system (`SYSTEM_NAME = "standard_circuit"`, built from a private `Stoplight::Wiring::GlobalState`, not the process-global `Stoplight.configure` one), caches them in a `Concurrent::Map`, applies forced-state overrides (`force_open`, `force_closed`), and emits `external.request` count + duration metrics on every call. Stoplight 6 caches one light per name per system and rejects conflicting re-registration, so `apply_config!`, `reset!` and a swapped `config.data_store` each discard the system and the next `light_for` builds a fresh one. `reset!` swaps in a fresh `Memory` data store between specs but leaves Redis stores alone. `light_for(name)` builds-on-demand and is used by `Health.snapshot` to materialize named circuits eagerly.
+
+Stoplight 6 differences the runner absorbs, so the public behaviour matches the 5.x era: `tracked_errors` / `skipped_errors` are passed on every `light.run` (registration accepts only named classes/modules; per-run lists accept any `===` matcher); `cool_off_time` / `window_size` are rounded up to whole seconds, minimum 1, when the light is built (the `CircuitSpec` keeps the value as given); colors are Symbols upstream and are stringified in `health_report` and event payloads; `NotifierBridge` attaches the error only to GREEN→RED, as stoplight 5 did.
 
 ### Health
 
@@ -121,7 +123,7 @@ Defaults live in `Config`:
 
 ## Dependencies
 
-- **stoplight** ~> 5.8 (circuit breaker primitives)
+- **stoplight** ~> 6.0, >= 6.0.1 (circuit breaker primitives)
 - **concurrent-ruby** ~> 1.3 (`Concurrent::Map` for the light cache)
 - **sentry-ruby** >= 5.17 (notifier + metrics)
 - **railties** >= 8.1 (Railtie hooks for the mailer)

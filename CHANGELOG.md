@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Requires stoplight 6** (`~> 6.0`, `>= 6.0.1`, was `~> 5.8`). StandardCircuit's
+  own API, events and payloads, `health_report` and test helpers are unchanged:
+  colors in `health_report` and event payloads stay Strings, `circuit.opened`
+  still carries the error only for a GREEN→RED trip, `reset!` still gives fresh
+  counters, `configure` can still be re-run with changed settings, and the
+  per-process `Memory` store is still the default. Circuits now live in a
+  dedicated Stoplight system named `standard_circuit`, separate from the
+  process-global one a host sets up with `Stoplight.configure`.
+
+### Upgrade notes
+
+What a host can still notice, all from stoplight 6 itself:
+
+- `Stoplight::Error::RedLight#message` is now a sentence
+  (``Light `stripe` is red - traffic stopped until recovery.``) instead of the
+  bare circuit name. That text is also the `error_message` of a
+  `run.completed` event with `status: :circuit_open`. Use `#light_name` if you
+  need the circuit name.
+- `StandardCircuit.runner.light_for(name)` returns a stoplight 6 light, whose
+  `#color` and `#state` are Symbols (`:red`) and whose `#lock` takes only the
+  `Stoplight::Color` constants. `lock(Stoplight::Color::RED)` works as before;
+  `lock("red")` raises.
+- A fractional `cool_off_time` or `window_size` is rounded up to whole seconds,
+  and a `cool_off_time` below 1 becomes 1, because stoplight 6 rejects anything
+  else. The registered `CircuitSpec` keeps the value you passed.
+- With `Stoplight::DataStore::Redis`, stoplight 6 needs Redis 7.4+ (or Valkey
+  7.2+), uses a new key schema (every circuit starts green after the deploy),
+  and no longer accepts `warn_on_clock_skew:`.
+
 ## [0.6.0] - 2026-10-22
 
 ### Fixed

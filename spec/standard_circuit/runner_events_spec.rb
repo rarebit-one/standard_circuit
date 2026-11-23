@@ -21,7 +21,8 @@ RSpec.describe StandardCircuit::Runner do
       expect(opened).not_to be_nil
       expect(opened[1]).to include(
         circuit: "flaky",
-        to_color: Stoplight::Color::RED,
+        from_color: "green",
+        to_color: "red",
         criticality: :standard,
         error_class: "RuntimeError",
         error_message: "boom"

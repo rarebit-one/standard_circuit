@@ -12,17 +12,30 @@ RSpec.describe StandardCircuit::NotifierBridge do
 
   it "emits opened on RED transitions with the error context" do
     captured = capture_event do
-      bridge.notify(light, "green", Stoplight::Color::RED, RuntimeError.new("boom"))
+      bridge.notify(light, Stoplight::Color::GREEN, Stoplight::Color::RED, RuntimeError.new("boom"))
     end
 
     expect(captured[:name]).to eq("standard_circuit.circuit.opened")
-    expect(captured[:payload]).to include(
+    expect(captured[:payload]).to eq(
       circuit: "stripe",
       from_color: "green",
-      to_color: Stoplight::Color::RED,
+      to_color: "red",
       criticality: :critical,
       error_class: "RuntimeError",
       error_message: "boom"
+    )
+  end
+
+  # Stoplight 6 passes the probe's error on YELLOW -> RED; stoplight 5 passed
+  # nil, so the payload never carried error keys for a failed recovery.
+  it "omits the error context when a recovery probe fails (YELLOW -> RED)" do
+    captured = capture_event do
+      bridge.notify(light, Stoplight::Color::YELLOW, Stoplight::Color::RED, RuntimeError.new("boom"))
+    end
+
+    expect(captured[:name]).to eq("standard_circuit.circuit.opened")
+    expect(captured[:payload]).to eq(
+      circuit: "stripe", from_color: "yellow", to_color: "red", criticality: :critical
     )
   end
 

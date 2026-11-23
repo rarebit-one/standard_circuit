@@ -72,7 +72,8 @@ module StandardCircuit
     def build_entry(light, spec, config)
       {
         name: light.name.to_sym,
-        color: light.color,
+        # Stoplight 6 returns Symbols; the report has always carried Strings.
+        color: light.color.to_s,
         locked: locked?(light, config),
         criticality: spec.criticality
       }
