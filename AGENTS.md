@@ -40,7 +40,8 @@ standard_circuit/
 │   │   └── metrics.rb           # Sentry::Metrics counters
 │   ├── config.rb                # Config + CircuitSpec struct + registry
 │   ├── dependency_spec.rb       # DependencySpec / PurposeSpec definitions + DSL builder
-│   ├── dependency.rb            # Runtime Dependency / Purpose handles
+│   ├── dependency.rb            # Runtime Dependency / Purpose handles (state, locks, stats, report)
+│   ├── stats.rb                 # Rolling per-dependency/per-purpose call stats + subscriber
 │   ├── runner.rb                # Light cache, run/force/reset, metrics
 │   ├── health.rb                # Snapshot + overall rollup helpers
 │   ├── health_controller.rb     # Opt-in 503-on-critical health endpoint
@@ -78,6 +79,10 @@ end
 `Config#dependency(name, criticality:, **breaker_opts) { |d| d.purpose(...) }` builds an immutable `DependencySpec` (see `dependency_spec.rb`). Purposes share the dependency's breaker (circuit named after the dependency, criticality = worst sharing purpose) unless `isolate: true`, which registers `<dependency>_<purpose>`. Every breaker is installed into `Config#circuits`, so `Runner`, `Health`, `NotifierBridge` and `health_report` see dependencies as plain circuits. `register` / `register_prefix` build a one-purpose (`:default`) spec via `DependencySpec.for_circuit` / `for_prefix`. `Config` tracks which dependency owns each named circuit (`@circuit_owners`); re-declaring a dependency drops its stale breakers but overwrites kept ones in place, so `circuits` order (and `health_report` order) never moves.
 
 `Config#run_target(name, purpose)` resolves a `run` to a `RunTarget` (circuit, dependency, purpose, criticality): a named dependency, then an isolated purpose's own circuit name, then a prefix match, else an unregistered name (dependency/purpose nil, so forced states and `UnknownCircuit` behave as before). Forced states and lights stay keyed by circuit. `StandardCircuit.dependency(name)` wraps a spec in a `Dependency` handle that reads live config/runner state: `open?` (every purpose open), `status` (worst purpose, via `Health.severity`, the per-circuit form of `Health.overall`), `circuits` (`Runner#circuit_state`: color, locked, forced) and the lock API (`Runner#lock` / `#unlock` on each breaker).
+
+### Stats and metrics_only
+
+`Stats::Subscriber` is an internal subscriber (wired by `Subscribers#internal_subscribers`) on `standard_circuit.run.completed`. It records into `StandardCircuit.stats`, a `Stats::Store` of fixed-size, mutex-guarded ring `Stats::Window`s keyed by dependency and by `[dependency, purpose]`. `configure` applies `config.stats_window_size` (resizing drops the windows) and `StandardCircuit.reset!` clears them. `CircuitSpec#metrics_only` makes `Runner#run` take `execute_metrics_only`: the light is built (so prefix circuits stay discoverable) but never run through, forced states and locks are ignored, and events, request metrics and fallback semantics match a closed breaker. `StandardCircuit.dependency_report` maps `Dependency#report` over every dependency; `health_report` is untouched.
 
 ### Runner
 
@@ -122,7 +127,10 @@ Defaults live in `Config`:
 | File | Purpose |
 |------|---------|
 | `lib/standard_circuit.rb` | Module entry point; require graph + module-level facade |
-| `lib/standard_circuit/config.rb` | `Config` + `CircuitSpec` registry |
+| `lib/standard_circuit/config.rb` | `Config` + `CircuitSpec` registry, `dependency` DSL, `run_target` resolution |
+| `lib/standard_circuit/dependency_spec.rb` | `DependencySpec` / `PurposeSpec` definitions and the purpose builder |
+| `lib/standard_circuit/dependency.rb` | `Dependency` / `Purpose` handles: state, locks, stats, report rows |
+| `lib/standard_circuit/stats.rb` | Rolling per-dependency / per-purpose call stats and their subscriber |
 | `lib/standard_circuit/runner.rb` | Light cache, forced states, metrics emission |
 | `lib/standard_circuit/health.rb` | Snapshot + rollup logic |
 | `lib/standard_circuit/controller_support.rb` | RedLight → 503 concern |

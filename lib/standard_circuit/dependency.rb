@@ -24,12 +24,13 @@ module StandardCircuit
       states.map { |state| effective_color(state) }.max_by { |color| COLOR_RANK.fetch(color, 0) } || "green"
     end
 
-    attr_reader :spec, :runner
+    attr_reader :spec, :runner, :config, :stats_store
 
-    def initialize(spec, runner, config)
+    def initialize(spec, runner, config, stats_store: StandardCircuit.stats)
       @spec = spec
       @runner = runner
       @config = config
+      @stats_store = stats_store
     end
 
     def name
@@ -69,6 +70,40 @@ module StandardCircuit
     # `{ name:, color:, locked:, forced: }` (see Runner#circuit_state).
     def circuits
       circuit_names.map { |circuit| @runner.circuit_state(circuit) }
+    end
+
+    # True when every purpose is metrics-only (see Config#dependency).
+    def metrics_only?
+      purposes.all?(&:metrics_only?)
+    end
+
+    # Rolling stats over the dependency's recent calls, all purposes
+    # together. See Stats.summarize for the shape; `calls: 0` and nil rates
+    # mean no evidence yet, not health.
+    def stats
+      @stats_store.for_dependency(name)
+    end
+
+    # One row of StandardCircuit.dependency_report. Circuit state is read
+    # once and every field is derived from that read, so status, open and
+    # the purposes can't describe different moments.
+    def report
+      states = circuits
+      by_name = states.to_h { |state| [ state[:name], state ] }
+      purpose_rows = purposes.map do |purpose|
+        purpose.report(prefix? ? states : by_name.values_at(*purpose.circuit_names).compact)
+      end
+
+      {
+        name: name,
+        status: purpose_rows.map { |row| row[:status] }.max_by { |status| STATUS_RANK.fetch(status) },
+        criticality: criticality,
+        open: purpose_rows.all? { |row| row[:open] },
+        metrics_only: purpose_rows.all? { |row| row[:metrics_only] },
+        stats: stats,
+        purposes: purpose_rows,
+        circuits: states
+      }
     end
 
     # True when no purpose can be served: every purpose's breaker is open
@@ -151,23 +186,49 @@ module StandardCircuit
         circuit_names.map { |circuit| dependency.runner.circuit_state(circuit) }
       end
 
+      # Calls are timed and recorded but never blocked (`metrics_only: true`
+      # on the dependency, or on an isolated purpose).
+      def metrics_only?
+        spec = dependency.prefix? ? dependency.config.prefixes[dependency.spec.prefix] : dependency.config.spec_for(circuit_name)
+        spec&.metrics_only || false
+      end
+
       # The breaker's color with forced overrides applied: "green" | "yellow"
-      # | "red". The worst sub-circuit's for a prefix dependency.
+      # | "red". The worst sub-circuit's for a prefix dependency. Always
+      # "green" when metrics-only: such a breaker never blocks a call.
       def color
-        Dependency.worst_color(circuits)
+        color_for(circuits)
       end
 
       # True while the breaker is open (red, or forced open). A prefix
       # dependency's purpose is open only when every sub-circuit used so far
-      # is, and never before one has been used.
+      # is, and never before one has been used. Never true when metrics-only.
       def open?
-        states = circuits
-        states.any? && states.all? { |state| Dependency.effective_color(state) == "red" }
+        open_for(circuits)
+      end
+
+      # Rolling stats over this purpose's recent calls (see Dependency#stats).
+      def stats
+        dependency.stats_store.for_purpose(dependency.name, name)
+      end
+
+      # +states+: this purpose's circuit states, when the caller already has them.
+      def report(states = circuits)
+        {
+          name: name,
+          criticality: criticality,
+          status: status_for(states),
+          open: open_for(states),
+          isolated: isolated?,
+          metrics_only: metrics_only?,
+          circuits: circuit_names,
+          stats: stats
+        }
       end
 
       # :ok | :degraded | :unavailable, from criticality and #color.
       def status
-        Health.severity(criticality, color)
+        status_for(circuits)
       end
 
       # Locks this purpose's breaker. A purpose that shares the dependency's
@@ -189,6 +250,22 @@ module StandardCircuit
 
       def inspect
         "#<#{self.class.name} #{dependency.name.inspect}/#{name.inspect} criticality=#{criticality.inspect}>"
+      end
+
+      private
+
+      def color_for(states)
+        metrics_only? ? "green" : Dependency.worst_color(states)
+      end
+
+      def open_for(states)
+        return false if metrics_only?
+
+        states.any? && states.all? { |state| Dependency.effective_color(state) == "red" }
+      end
+
+      def status_for(states)
+        Health.severity(criticality, color_for(states))
       end
     end
   end

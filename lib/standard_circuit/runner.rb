@@ -24,6 +24,9 @@ module StandardCircuit
     def run(name, purpose: nil, fallback: nil, &block)
       fallback = accept_error_argument(fallback)
       target = @config.run_target(name, purpose)
+      spec = @config.spec_for(target.circuit)
+      return execute_metrics_only(target, spec, fallback, &block) if spec&.metrics_only
+
       forced = @forced_states[target.circuit]
       return run_forced_open(target, fallback) if forced == :open
       return yield if forced == :closed
@@ -78,13 +81,14 @@ module StandardCircuit
     # Lock a circuit's light open (red) or closed (green) until #unlock. The
     # lock lives in the data store: per process with Memory, shared by every
     # process with Redis.
+    # A no-op for a metrics-only circuit, whose light is never consulted.
     def lock(name, state)
       color = { open: Stoplight::Color::RED, closed: Stoplight::Color::GREEN }.fetch(state)
-      light_for(name).lock(color)
+      light_for(name).lock(color) unless metrics_only?(name)
     end
 
     def unlock(name)
-      light_for(name).unlock
+      light_for(name).unlock unless metrics_only?(name)
     end
 
     # Snapshot Hash of the current cached lights. Used by Health to discover
@@ -151,6 +155,47 @@ module StandardCircuit
       emit_request_metric(name, :failure, duration)
       emit_run_completed(target, status: :failure, duration_ms: duration, error: e)
       raise e
+    end
+
+    # A metrics-only breaker never blocks a call by any route: the light is
+    # never consulted, and forced states and locks don't apply. Everything
+    # else matches a breaker that is closed: a tracked error goes to the
+    # fallback when there is one, the same events and request metrics are
+    # emitted, with the same statuses.
+    #
+    # The light is still built, though not run through, because the light
+    # cache is how prefix-matched circuits (`s3_uploads`) become known to
+    # Health.snapshot and Dependency#circuit_names.
+    def execute_metrics_only(target, spec, fallback)
+      name = target.circuit
+      light_for(name)
+      started_at = monotonic_now
+      result = begin
+        yield
+      rescue StandardError => e
+        raise unless fallback && tracked_error?(spec, e)
+
+        fallback.call(e)
+      end
+      duration = duration_ms(started_at)
+      emit_request_metric(name, :success, duration)
+      emit_run_completed(target, status: :success, duration_ms: duration)
+      result
+    rescue StandardError => e
+      duration = duration_ms(started_at)
+      emit_request_metric(name, :failure, duration)
+      emit_run_completed(target, status: :failure, duration_ms: duration, error: e)
+      raise e
+    end
+
+    def metrics_only?(name)
+      @config.spec_for(name)&.metrics_only
+    end
+
+    # Stoplight's rule: skipped wins over tracked.
+    def tracked_error?(spec, error)
+      spec.skipped_errors.none? { |matcher| matcher === error } &&
+        spec.tracked_errors.any? { |matcher| matcher === error }
     end
 
     def run_forced_open(target, fallback)

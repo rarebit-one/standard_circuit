@@ -17,6 +17,7 @@ require "standard_circuit/notifier_bridge"
 require "standard_circuit/notifiers/logger"
 require "standard_circuit/notifiers/sentry"
 require "standard_circuit/notifiers/metrics"
+require "standard_circuit/stats"
 require "standard_circuit/subscribers"
 require "standard_circuit/dependency_spec"
 require "standard_circuit/config"
@@ -42,6 +43,7 @@ module StandardCircuit
     def configure
       yield config
       runner.apply_config!(config)
+      stats.window_size = config.stats_window_size
       subscribers.setup!
       Mailer::Retry.install_on_load if config.mailer_retry
       config
@@ -57,6 +59,12 @@ module StandardCircuit
 
     def subscribers
       @subscribers ||= Subscribers.new
+    end
+
+    # Rolling per-dependency / per-purpose call stats (see Stats), read
+    # through `dependency(name).stats`.
+    def stats
+      @stats ||= Stats::Store.new(window_size: config.stats_window_size)
     end
 
     def run(name, purpose: nil, fallback: nil, &block)
@@ -87,10 +95,18 @@ module StandardCircuit
 
     def reset!
       runner.reset!
+      stats.clear!
     end
 
     def health_report
       runner.health_report
+    end
+
+    # One row per dependency, for a later standard_health contribution and
+    # for dashboards. health_report is unchanged and stays what
+    # standard_health reads today.
+    def dependency_report
+      dependencies.map(&:report)
     end
   end
 end
