@@ -257,19 +257,15 @@ module StandardCircuit
     # previous definition registered, then register the new ones. Breakers
     # the new definition keeps are overwritten in place rather than deleted
     # and re-added, so `circuits` (and so `health_report`) keeps its order.
+    # Every conflict is checked before anything changes, so a rejected
+    # definition leaves the registry exactly as it was.
     def install_dependency(spec)
+      check_names!(spec)
+
       stale = @circuit_owners.select { |circuit, owner| owner == spec.name && !spec.circuits.key?(circuit) }
       stale.each_key do |circuit|
         @circuits.delete(circuit)
         @circuit_owners.delete(circuit)
-      end
-
-      spec.circuits.each_key do |circuit|
-        owner = @circuit_owners[circuit]
-        next if owner.nil? || owner == spec.name
-
-        raise ArgumentError,
-          "circuit #{circuit.inspect} of dependency #{spec.name.inspect} is already registered by dependency #{owner.inspect}"
       end
 
       spec.circuits.each do |circuit, circuit_spec|
@@ -277,6 +273,27 @@ module StandardCircuit
         @circuit_owners[circuit] = spec.name
       end
       @dependencies[spec.name] = spec
+    end
+
+    # `run(name)` resolves a dependency name before a breaker name, so the two
+    # share one namespace across dependencies: a breaker may not take another
+    # dependency's name or another dependency's breaker, and a dependency may
+    # not take another dependency's breaker name.
+    def check_names!(spec)
+      spec.circuits.each_key do |circuit|
+        owner = @circuit_owners[circuit]
+        owner = circuit if owner.nil? && @dependencies.key?(circuit)
+        next if owner.nil? || owner == spec.name
+
+        raise ArgumentError,
+          "circuit #{circuit.inspect} of dependency #{spec.name.inspect} is already registered by dependency #{owner.inspect}"
+      end
+
+      owner = @circuit_owners[spec.name]
+      return if owner.nil? || owner == spec.name
+
+      raise ArgumentError,
+        "dependency #{spec.name.inspect} has the name of a circuit already registered by dependency #{owner.inspect}"
     end
 
     def target_for(dependency, purpose)

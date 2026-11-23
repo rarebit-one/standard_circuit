@@ -290,6 +290,33 @@ RSpec.describe StandardCircuit::Dependency do
       }.to raise_error(ArgumentError, /already registered by dependency :google_maps_address/)
     end
 
+    it "leaves the registry untouched when a re-declaration is rejected" do
+      StandardCircuit.config.dependency(:maps) { |d| d.purpose :address, isolate: true }
+      StandardCircuit.config.register(:maps_geocode)
+
+      expect {
+        StandardCircuit.config.dependency(:maps) { |d| d.purpose :geocode, isolate: true }
+      }.to raise_error(ArgumentError, /already registered by dependency :maps_geocode/)
+      expect(StandardCircuit.config.circuits.keys).to eq([ :maps_address, :maps_geocode ])
+      expect(StandardCircuit.run(:maps, purpose: :address) { :ok }).to eq(:ok)
+    end
+
+    it "rejects a breaker named after another dependency" do
+      StandardCircuit.config.dependency(:maps_address) { |d| d.purpose :lookup, isolate: true }
+
+      expect {
+        StandardCircuit.config.dependency(:maps) { |d| d.purpose :address, isolate: true }
+      }.to raise_error(ArgumentError, /already registered by dependency :maps_address/)
+    end
+
+    it "rejects a dependency named after another dependency's breaker" do
+      StandardCircuit.config.dependency(:maps) { |d| d.purpose :address, isolate: true }
+
+      expect {
+        StandardCircuit.config.dependency(:maps_address) { |d| d.purpose :lookup, isolate: true }
+      }.to raise_error(ArgumentError, /name of a circuit already registered by dependency :maps/)
+    end
+
     it "rejects breaker options on a purpose that shares the breaker" do
       expect { define { |d| d.purpose :a, threshold: 2 } }.to raise_error(ArgumentError, /isolate: true/)
     end
