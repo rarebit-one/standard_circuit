@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-23
+
+First step from circuit breakers towards dependency management: a registry of
+the external services an app depends on, the purposes it calls them for, and
+each one's state and recent call stats. Additive: an app that upgrades and
+changes nothing sees no difference beyond the stoplight 6 notes below.
+
 ### Added
 
 - **Dependencies and purposes.** `c.dependency :name, criticality:, <breaker options> { |d| d.purpose ... }`
