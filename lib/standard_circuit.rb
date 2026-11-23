@@ -18,7 +18,9 @@ require "standard_circuit/notifiers/logger"
 require "standard_circuit/notifiers/sentry"
 require "standard_circuit/notifiers/metrics"
 require "standard_circuit/subscribers"
+require "standard_circuit/dependency_spec"
 require "standard_circuit/config"
+require "standard_circuit/dependency"
 require "standard_circuit/health"
 require "standard_circuit/runner"
 require "standard_circuit/mailer/circuit_open_error"
@@ -30,6 +32,11 @@ require "standard_circuit/engine" if defined?(::Rails::Engine)
 module StandardCircuit
   class Error < StandardError; end
   class UnknownCircuit < Error; end
+  class UnknownDependency < UnknownCircuit; end
+  # `run` named a purpose the dependency does not declare.
+  class UnknownPurpose < Error; end
+  # `run` gave no purpose for a dependency with several and no default.
+  class PurposeRequired < Error; end
 
   class << self
     def configure
@@ -52,8 +59,18 @@ module StandardCircuit
       @subscribers ||= Subscribers.new
     end
 
-    def run(name, fallback: nil, &block)
-      runner.run(name, fallback: fallback, &block)
+    def run(name, purpose: nil, fallback: nil, &block)
+      runner.run(name, purpose: purpose, fallback: fallback, &block)
+    end
+
+    # The dependency +name+ (see Config#dependency), or the one a
+    # `register` / `register_prefix` call created. Raises UnknownDependency.
+    def dependency(name)
+      Dependency.new(config.dependency_spec(name), runner, config)
+    end
+
+    def dependencies
+      config.dependency_specs.map { |spec| Dependency.new(spec, runner, config) }
     end
 
     def force_open(name, &block)

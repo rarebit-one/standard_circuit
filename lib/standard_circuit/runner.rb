@@ -18,13 +18,17 @@ module StandardCircuit
       discard_system!
     end
 
-    def run(name, fallback: nil, &block)
+    # +name+ is a dependency or a circuit (see Config#run_target). Forced
+    # states and the light are keyed by the resolved circuit, so purposes that
+    # share a breaker share its forced state too.
+    def run(name, purpose: nil, fallback: nil, &block)
       fallback = accept_error_argument(fallback)
-      forced = @forced_states[name.to_sym]
-      return run_forced_open(name, fallback) if forced == :open
+      target = @config.run_target(name, purpose)
+      forced = @forced_states[target.circuit]
+      return run_forced_open(target, fallback) if forced == :open
       return yield if forced == :closed
 
-      execute(name, fallback, &block)
+      execute(target, fallback, &block)
     end
 
     def force_open(name, &block)
@@ -99,7 +103,8 @@ module StandardCircuit
       ->(_error) { fallback.call }
     end
 
-    def execute(name, fallback, &block)
+    def execute(target, fallback, &block)
+      name = target.circuit
       started_at = monotonic_now
       light = light_for(name)
       spec = @config.spec_for(name)
@@ -110,28 +115,29 @@ module StandardCircuit
       result = light.run(fallback, tracked_errors: spec.tracked_errors, skipped_errors: spec.skipped_errors, &block)
       duration = duration_ms(started_at)
       emit_request_metric(name, :success, duration)
-      emit_run_completed(name, status: :success, duration_ms: duration)
+      emit_run_completed(target, status: :success, duration_ms: duration)
       result
     rescue Stoplight::Error::RedLight => e
       duration = duration_ms(started_at)
       emit_request_metric(name, :circuit_open, duration)
-      emit_run_completed(name, status: :circuit_open, duration_ms: duration, error: e)
+      emit_run_completed(target, status: :circuit_open, duration_ms: duration, error: e)
       raise e unless fallback
 
-      emit_fallback_invoked(name, reason: :circuit_open)
+      emit_fallback_invoked(target, reason: :circuit_open)
       fallback.call(nil)
     rescue StandardError => e
       duration = duration_ms(started_at)
       emit_request_metric(name, :failure, duration)
-      emit_run_completed(name, status: :failure, duration_ms: duration, error: e)
+      emit_run_completed(target, status: :failure, duration_ms: duration, error: e)
       raise e
     end
 
-    def run_forced_open(name, fallback)
+    def run_forced_open(target, fallback)
+      name = target.circuit
       emit_request_metric(name, :circuit_open, 0)
-      emit_run_completed(name, status: :circuit_open, duration_ms: 0)
+      emit_run_completed(target, status: :circuit_open, duration_ms: 0)
       if fallback
-        emit_fallback_invoked(name, reason: :forced_open)
+        emit_fallback_invoked(target, reason: :forced_open)
         return fallback.call(nil)
       end
 
@@ -232,23 +238,26 @@ module StandardCircuit
       ::Sentry::Metrics.distribution("#{prefix}.request.duration", duration, unit: "millisecond", attributes: attrs)
     end
 
-    def emit_fallback_invoked(name, reason:)
-      spec = @config.spec_for(name)
+    # Per-call events carry the purpose's criticality: one shared breaker can
+    # serve purposes of different weight. For a circuit registered with
+    # `register`/`register_prefix` that is the circuit's own criticality.
+    def emit_fallback_invoked(target, reason:)
       EventEmitter.emit("standard_circuit.circuit.fallback_invoked",
-        circuit: name.to_s,
+        circuit: target.circuit.to_s,
         reason: reason,
-        criticality: spec&.criticality)
+        criticality: target.criticality)
     end
 
-    def emit_run_completed(name, status:, duration_ms:, error: nil)
-      spec = @config.spec_for(name)
+    def emit_run_completed(target, status:, duration_ms:, error: nil)
       EventEmitter.emit("standard_circuit.run.completed",
-        circuit: name.to_s,
+        circuit: target.circuit.to_s,
         status: status,
         duration_ms: duration_ms,
-        criticality: spec&.criticality,
+        criticality: target.criticality,
         error_class: error&.class&.name,
-        error_message: error&.message)
+        error_message: error&.message,
+        dependency: target.dependency,
+        purpose: target.purpose)
     end
 
     def monotonic_now

@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Dependencies and purposes.** `c.dependency :name, criticality:, <breaker options> { |d| d.purpose ... }`
+  declares an external service and the reasons the app calls it. Each purpose
+  has its own criticality. Purposes share the dependency's breaker unless
+  declared `isolate: true`, which gives them a breaker named
+  `<dependency>_<purpose>`. `StandardCircuit.run(name, purpose:)` targets one.
+  An undeclared purpose raises `UnknownPurpose`. A bare `run` on a dependency
+  with several purposes raises `PurposeRequired` unless one is marked
+  `default: true`. See the README's "Dependencies and purposes".
+- `StandardCircuit.dependency(name)` and `StandardCircuit.dependencies` return
+  read-only handles (name, criticality, purposes, circuit names). An unknown
+  name raises `UnknownDependency`, a subclass of `UnknownCircuit`.
+- `register`, `register_prefix` and `register_preset` also create a breaker-only
+  dependency with one implicit `:default` purpose, so circuits registered the
+  old way show up through the new API. A prefix registration is one dependency
+  whose circuits are its sub-circuits. Their behaviour, `health_report` and
+  events are otherwise unchanged.
+- `standard_circuit.run.completed` gains `dependency:` and `purpose:` keys.
+  Its `criticality` (and `fallback_invoked`'s) is the purpose's, which for a
+  `register`ed circuit is the circuit's own, as before.
+
 ### Changed
 
 - **Requires stoplight 6** (`~> 6.0`, `>= 6.0.1`, was `~> 5.8`). StandardCircuit's
