@@ -13,7 +13,7 @@ module StandardCircuit
   # Immutable once built; `Config` replaces the whole spec on re-registration.
   class DependencySpec
     DEFAULT_PURPOSE = :default
-    BREAKER_OPTIONS = [ :threshold, :cool_off_time, :window_size, :tracked_errors, :skipped_errors ].freeze
+    BREAKER_OPTIONS = [ :threshold, :cool_off_time, :window_size, :tracked_errors, :skipped_errors, :metrics_only ].freeze
     CRITICALITY_RANK = { optional: 0, standard: 1, critical: 2 }.freeze
 
     PurposeSpec = Data.define(:name, :criticality, :circuit, :isolated, :default) do
@@ -25,7 +25,8 @@ module StandardCircuit
 
     # Build from the `Config#dependency` DSL. +opts+ are the breaker options
     # `register` takes (threshold, cool_off_time, window_size, tracked_errors,
-    # skipped_errors); +criticality+ is the default for every purpose.
+    # skipped_errors, metrics_only); +criticality+ is the default for every
+    # purpose.
     def self.define(name, criticality: Config::DEFAULT_CRITICALITY, **opts)
       name = name.to_sym
       validate_criticality!(criticality, "dependency #{name.inspect}")

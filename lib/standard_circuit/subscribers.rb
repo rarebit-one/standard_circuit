@@ -3,7 +3,7 @@ module StandardCircuit
   # bus is live (Rails.event on 8.1+, ActiveSupport::Notifications elsewhere).
   #
   # Each subscriber must respond to `call(event_name, payload)`. Internal
-  # subscribers (Logger / Sentry / Metrics) are built from the live config so
+  # subscribers (Logger / Sentry / Metrics / Stats) are built from the live config so
   # changes to `metric_prefix` / `logger` propagate when `setup!` is re-run.
   #
   # Subscriptions cover the namespace prefix `standard_circuit.`, so a single
@@ -74,6 +74,7 @@ module StandardCircuit
       list = [ Notifiers::Logger.new(config.logger) ]
       list << Notifiers::Sentry.new(levels: config.sentry_criticality_levels) if config.sentry_enabled
       list << Notifiers::Metrics.new(metric_prefix: config.metric_prefix)
+      list << Stats::Subscriber.new(StandardCircuit.stats)
       list
     end
 

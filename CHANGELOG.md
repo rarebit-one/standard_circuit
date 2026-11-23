@@ -27,6 +27,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `lock_open!` is the supported replacement for
   `runner.light_for(name).lock(Stoplight::Color::RED)`. Forced states count.
   State is per process with the default `Memory` store.
+- **Rolling stats.** A built-in subscriber on `standard_circuit.run.completed`
+  keeps a bounded, thread-safe, in-process window of the last
+  `config.stats_window_size` calls (default 100) per dependency and per
+  purpose. Read it with `dependency(name).stats` / `.purpose(p).stats`: counts
+  by status, error rate and p50/p95 latency over attempted calls,
+  `last_success_at`, `last_failure_at`, consecutive failures, and calls in
+  the window. No calls reads as `calls: 0` with nil rates, never as healthy.
+  `reset!` clears it.
+- **`metrics_only: true`** on a dependency, an isolated purpose, or a
+  `register` call times and records calls but never blocks one. It doesn't
+  trip, and it ignores forced states and locks. `open?` is always false.
+- **`StandardCircuit.dependency_report`**: one row per dependency with status,
+  criticality, purposes (criticality, status, stats) and circuits (color,
+  locked, forced). `health_report` is unchanged.
 - `register`, `register_prefix` and `register_preset` also create a breaker-only
   dependency with one implicit `:default` purpose, so circuits registered the
   old way show up through the new API. A prefix registration is one dependency

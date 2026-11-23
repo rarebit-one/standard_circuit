@@ -228,6 +228,70 @@ StandardCircuit.dependency(:stripe).unlock!
 StandardCircuit.dependency(:myinfo).open?
 ```
 
+### Rolling stats
+
+Every `run` already emits `standard_circuit.run.completed`. A built-in subscriber keeps a rolling window of those calls per dependency and per purpose:
+
+```ruby
+StandardCircuit.dependency(:google_oauth).stats
+StandardCircuit.dependency(:google_oauth).purpose(:sign_in).stats
+# => {
+#      calls: 42,                 # calls in the window
+#      window_size: 100,
+#      counts: { success: 40, failure: 1, circuit_open: 1 },
+#      error_rate: 0.0244,        # failure / (success + failure)
+#      latency_ms: { p50: 81.2, p95: 240.5 },
+#      last_success_at: 2026-11-23 12:00:03 UTC,
+#      last_failure_at: 2026-11-23 11:58:41 UTC,
+#      consecutive_failures: 0
+#    }
+```
+
+- **No calls is not healthy.** A dependency or purpose with nothing recorded reports `calls: 0`, `error_rate: nil` and `latency_ms: nil`, so a critical purpose with no evidence can be told apart from one that is working.
+- `error_rate` and latency count **attempted** calls only. A `circuit_open` call never reached the upstream, so it is counted but is no evidence either way. A failure that a fallback absorbed is reported by `run.completed`, and so counted here, as `:success`, as it always has been.
+- The window is the last `stats_window_size` calls (default 100), kept in a fixed ring per dependency and per purpose, so memory stays bounded however much traffic flows. `last_success_at`, `last_failure_at` and `consecutive_failures` outlive the ring.
+- **In-process only**: every worker has its own numbers, as with the default `Memory` store. `StandardCircuit.reset!` clears them. Recording never raises into the wrapped call.
+- The subscriber is wired with the others, by the engine at boot or by `configure`. A host test suite using `require "standard_circuit/rspec"` tears subscribers down before each example, so call `StandardCircuit.subscribers.setup!` in an example that reads stats.
+
+```ruby
+StandardCircuit.configure do |c|
+  c.stats_window_size = 200
+end
+```
+
+### Observing before enforcing (`metrics_only`)
+
+```ruby
+c.dependency :new_upstream, criticality: :standard, metrics_only: true
+c.dependency :google_maps do |d|
+  d.purpose :places, default: true
+  d.purpose :address, isolate: true, metrics_only: true   # only this purpose is observed
+end
+c.register(:legacy_api, metrics_only: true)               # register takes it too
+```
+
+A metrics-only breaker times and records every call, and `run.completed` and the request metrics flow exactly as before, but it **never blocks a call by any route**: it doesn't trip, and it ignores `force_open` / `force_closed` and locks. `open?` is always `false`, and its purpose's status is `:ok`. Towards a fallback it behaves like a closed breaker: a tracked error goes to the fallback, anything else is raised. On a purpose it needs `isolate: true`, because a shared breaker either enforces or doesn't. Use it to watch an uncovered dependency's real error rate and latency before choosing a threshold.
+
+### `dependency_report`
+
+```ruby
+StandardCircuit.dependency_report
+# => [
+#      { name: :google_oauth, status: :unavailable, criticality: :critical, open: true, metrics_only: false,
+#        stats: { calls: 12, ... },
+#        purposes: [
+#          { name: :sign_in, criticality: :critical, status: :unavailable, open: true, isolated: false,
+#            metrics_only: false, circuits: [:google_oauth], stats: { calls: 0, error_rate: nil, ... } },
+#          { name: :calendar, criticality: :standard, status: :degraded, open: true, isolated: false,
+#            metrics_only: false, circuits: [:google_oauth], stats: { calls: 12, ... } }
+#        ],
+#        circuits: [{ name: :google_oauth, color: "red", locked: false, forced: nil }] },
+#      ...
+#    ]
+```
+
+One row per dependency, including every `register` / `register_prefix` circuit. `StandardCircuit.health_report` is unchanged and stays what `standard_health` reads; a later release will contribute `dependency_report` there.
+
 ## Circuit state storage (`data_store`)
 
 Circuit state (failure counts, colors, locks) lives in a Stoplight data store. StandardCircuit defaults to `Stoplight::DataStore::Memory.new`, which is **per-process**: each Puma worker, Sidekiq/SolidQueue worker, and console gets its own independent view of every circuit.

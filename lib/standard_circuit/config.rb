@@ -17,6 +17,7 @@ module StandardCircuit
       :tracked_errors,
       :skipped_errors,
       :criticality,
+      :metrics_only,
       keyword_init: true
     ) do
       def self.build(**opts)
@@ -37,7 +38,9 @@ module StandardCircuit
           # default only kicks in when the key is absent. See
           # ErrorTaxonomies.default_skipped_for for why AWS needs one.
           skipped_errors: opts.fetch(:skipped_errors) { ErrorTaxonomies.default_skipped_for(tracked_errors) },
-          criticality: criticality
+          criticality: criticality,
+          # Time and record calls, but never open: see Runner#execute_metrics_only.
+          metrics_only: opts.fetch(:metrics_only, false) ? true : false
         )
       end
     end
@@ -49,7 +52,8 @@ module StandardCircuit
     RunTarget = Data.define(:circuit, :dependency, :purpose, :criticality)
 
     attr_accessor :sentry_enabled, :metric_prefix, :data_store, :logger
-    attr_reader :circuits, :prefixes, :extra_notifiers, :sentry_criticality_levels, :mailer_retry
+    attr_reader :circuits, :prefixes, :extra_notifiers, :sentry_criticality_levels, :mailer_retry,
+      :stats_window_size
 
     def initialize
       @sentry_enabled = true
@@ -65,6 +69,17 @@ module StandardCircuit
       @extra_notifiers = []
       @extra_notifier_keys = []
       @mailer_retry = nil
+      @stats_window_size = Stats::DEFAULT_WINDOW_SIZE
+    end
+
+    # How many recent calls each dependency's and purpose's rolling stats
+    # keep (see Stats). Applied on `configure`; changing it drops the windows.
+    def stats_window_size=(size)
+      unless size.is_a?(Integer) && size.positive?
+        raise ArgumentError, "stats_window_size must be a positive Integer; got #{size.inspect}"
+      end
+
+      @stats_window_size = size
     end
 
     # Opt in to retrying ActionMailer::MailDeliveryJob on
