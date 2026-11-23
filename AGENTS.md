@@ -39,6 +39,8 @@ standard_circuit/
 │   │   ├── sentry.rb            # Captures GREEN→RED events
 │   │   └── metrics.rb           # Sentry::Metrics counters
 │   ├── config.rb                # Config + CircuitSpec struct + registry
+│   ├── dependency_spec.rb       # DependencySpec / PurposeSpec definitions + DSL builder
+│   ├── dependency.rb            # Runtime Dependency / Purpose handles
 │   ├── runner.rb                # Light cache, run/force/reset, metrics
 │   ├── health.rb                # Snapshot + overall rollup helpers
 │   ├── health_controller.rb     # Opt-in 503-on-critical health endpoint
@@ -70,6 +72,12 @@ StandardCircuit.configure do |c|
   c.register_prefix("s3", threshold: 10, criticality: :standard)
 end
 ```
+
+### Dependencies and purposes
+
+`Config#dependency(name, criticality:, **breaker_opts) { |d| d.purpose(...) }` builds an immutable `DependencySpec` (see `dependency_spec.rb`). Purposes share the dependency's breaker (circuit named after the dependency, criticality = worst sharing purpose) unless `isolate: true`, which registers `<dependency>_<purpose>`. Every breaker is installed into `Config#circuits`, so `Runner`, `Health`, `NotifierBridge` and `health_report` see dependencies as plain circuits. `register` / `register_prefix` build a one-purpose (`:default`) spec via `DependencySpec.for_circuit` / `for_prefix`. `Config` tracks which dependency owns each named circuit (`@circuit_owners`); re-declaring a dependency drops its stale breakers but overwrites kept ones in place, so `circuits` order (and `health_report` order) never moves.
+
+`Config#run_target(name, purpose)` resolves a `run` to a `RunTarget` (circuit, dependency, purpose, criticality): a named dependency, then an isolated purpose's own circuit name, then a prefix match, else an unregistered name (dependency/purpose nil, so forced states and `UnknownCircuit` behave as before). Forced states and lights stay keyed by circuit. `StandardCircuit.dependency(name)` wraps a spec in a `Dependency` handle that reads live config/runner state.
 
 ### Runner
 

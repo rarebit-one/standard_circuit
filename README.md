@@ -117,6 +117,81 @@ c.register_preset(:s3)
 
 There is deliberately no `:stripe` preset — the apps that wrap Stripe disagree on threshold, criticality, and skips, so `ErrorTaxonomies::Stripe.tracked` stays the shared piece.
 
+## Dependencies and purposes
+
+A **dependency** is one external service the app calls. A **purpose** is a declared reason the app calls it, and each purpose has its own criticality. One upstream is often called for reasons of different weight: Google OAuth for sign-in (critical) and for Calendar linking (standard). Before purposes, that meant either putting the circuit's criticality on its most important use or hand-splitting circuits.
+
+```ruby
+StandardCircuit.configure do |c|
+  # One reason to call it: criticality on the dependency, implicit :default purpose.
+  c.dependency :stripe, criticality: :critical, threshold: 5, cool_off_time: 30,
+               tracked_errors: StandardCircuit::ErrorTaxonomies::Stripe.tracked,
+               skipped_errors: StandardCircuit::AdapterErrors::Stripe.caller_errors
+
+  # One upstream, several reasons. The purposes share one breaker.
+  c.dependency :google_oauth, threshold: 3, cool_off_time: 30 do |d|
+    d.purpose :sign_in,  criticality: :critical
+    d.purpose :calendar, criticality: :standard
+  end
+
+  # A purpose whose failures look different gets its own breaker.
+  c.dependency :google_maps, criticality: :optional do |d|
+    d.purpose :places, default: true
+    d.purpose :address, isolate: true, threshold: 2   # breaker :google_maps_address
+  end
+end
+
+StandardCircuit.run(:google_oauth, purpose: :calendar) { calendar.list_events }
+StandardCircuit.run(:google_maps) { places.search(query) }   # the default purpose, :places
+```
+
+The rules:
+
+- **Breaker options** are the ones `register` takes (`threshold`, `cool_off_time`, `window_size`, `tracked_errors`, `skipped_errors`), passed flat. `criticality:` on the dependency is the default for each purpose.
+- **Purposes share the dependency's breaker** by default, because the same upstream's failures are correlated. The shared breaker is named after the dependency and takes the worst criticality among its purposes, which is what `health_report` and the transition events use.
+- **`isolate: true`** gives a purpose its own breaker, named `<dependency>_<purpose>`, with the dependency's breaker options plus any passed on the purpose. Breaker options on a purpose that isn't isolated raise `ArgumentError`, because a shared breaker has one set of settings.
+- **Purposes are a closed set.** `run` with an undeclared purpose raises `StandardCircuit::UnknownPurpose`. `run` without `purpose:` uses the implicit purpose, or the one declared `default: true`; with neither, it raises `StandardCircuit::PurposeRequired`. Raising beats guessing which purpose a bare call meant, and `default: true` keeps existing bare `run(:name)` call sites working when you add purposes.
+- **`register`, `register_prefix` and `register_preset` still work unchanged**, and each now also creates a breaker-only dependency with one implicit `:default` purpose. `StandardCircuit.dependency(:stripe)` finds a circuit registered the old way, and a prefix registration is one dependency whose circuits (`s3_uploads`, `s3_avatars`, ...) are its sub-circuits.
+- An isolated purpose's breaker can be run by its own name (`run(:google_maps_address)`), so a hand-split circuit's call sites keep working after you fold it into a purpose. Re-declaring a dependency replaces it; a breaker name another dependency already owns raises `ArgumentError`.
+
+Per-call events (`run.completed`, `fallback_invoked`) carry the **purpose's** criticality, plus `dependency:` and `purpose:` on `run.completed`. For a circuit registered with `register`, that criticality is the circuit's own, exactly as before.
+
+```ruby
+dep = StandardCircuit.dependency(:google_maps)   # raises StandardCircuit::UnknownDependency (an UnknownCircuit)
+dep.criticality                                  # => :optional (worst purpose)
+dep.purposes.map(&:name)                         # => [:places, :address]
+dep.purpose(:address).circuit_name               # => :google_maps_address
+dep.circuit_names                                # => [:google_maps, :google_maps_address]
+StandardCircuit.dependencies                     # every dependency, old-style registrations included
+```
+
+Replace your host code with:
+
+```ruby
+# Before: criticality pinned to the most important use
+c.register(:google_oauth, threshold: 3, criticality: :critical) # "because sign-in depends on it"
+StandardCircuit.run(:google_oauth) { calendar.link! }
+
+# After
+c.dependency :google_oauth, threshold: 3 do |d|
+  d.purpose :sign_in,  criticality: :critical
+  d.purpose :calendar, criticality: :standard
+end
+StandardCircuit.run(:google_oauth, purpose: :calendar) { calendar.link! }
+```
+
+```ruby
+# Before: a second circuit only because one use fails differently
+c.register(:google_maps, criticality: :optional)
+c.register(:google_maps_address, threshold: 2, criticality: :optional)
+
+# After: same breaker names, so metrics, health entries and call sites carry over
+c.dependency :google_maps, criticality: :optional do |d|
+  d.purpose :places, default: true
+  d.purpose :address, isolate: true, threshold: 2
+end
+```
+
 ## Circuit state storage (`data_store`)
 
 Circuit state (failure counts, colors, locks) lives in a Stoplight data store. StandardCircuit defaults to `Stoplight::DataStore::Memory.new`, which is **per-process**: each Puma worker, Sidekiq/SolidQueue worker, and console gets its own independent view of every circuit.
@@ -171,10 +246,10 @@ Every circuit lifecycle moment is emitted as a Rails event. On Rails 8.1+ the ca
 | `standard_circuit.circuit.closed` | GREEN transition (recovered) | `circuit:, from_color:, to_color:, criticality:` |
 | `standard_circuit.circuit.degraded` | YELLOW transition (half-open probe) | `circuit:, from_color:, to_color:, criticality:` |
 | `standard_circuit.circuit.fallback_invoked` | Runner returned a fallback instead of raising RedLight | `circuit:, reason: (:circuit_open\|:forced_open), criticality:` |
-| `standard_circuit.circuit.registered` | `Config#register` / `register_prefix` was called (see note below) | `circuit:, criticality:, scope: (:name\|:prefix)` |
-| `standard_circuit.run.completed` | Every wrapped `StandardCircuit.run` call (success, failure, or circuit_open) | `circuit:, status: (:success\|:failure\|:circuit_open), duration_ms:, criticality:, error_class:, error_message:` |
+| `standard_circuit.circuit.registered` | `Config#register` / `register_prefix` was called, or once per breaker a `Config#dependency` declares (see note below) | `circuit:, criticality:, scope: (:name\|:prefix)` |
+| `standard_circuit.run.completed` | Every wrapped `StandardCircuit.run` call (success, failure, or circuit_open) | `circuit:, status: (:success\|:failure\|:circuit_open), duration_ms:, criticality:, error_class:, error_message:, dependency:, purpose:` |
 
-> **Note on `standard_circuit.run.completed`:** the per-call event for cost / latency / success-rate dashboards. Fires on every `Runner#execute` invocation and on `force_open` runs; **not** emitted for `force_closed` runs (which intentionally bypass the runner). All payload keys are always present — `error_class` and `error_message` are `nil` on `:success`. Payload duration uses `duration_ms` (numeric), not `event.duration`, so subscribers work identically on the `Rails.event` and `ActiveSupport::Notifications` backends.
+> **Note on `standard_circuit.run.completed`:** the per-call event for cost / latency / success-rate dashboards. Fires on every `Runner#execute` invocation and on `force_open` runs; **not** emitted for `force_closed` runs (which intentionally bypass the runner). All payload keys are always present — `error_class` and `error_message` are `nil` on `:success`, and `dependency` / `purpose` are `nil` only for a forced name that was never registered. `criticality` is the purpose's (see [Dependencies and purposes](#dependencies-and-purposes)). Payload duration uses `duration_ms` (numeric), not `event.duration`, so subscribers work identically on the `Rails.event` and `ActiveSupport::Notifications` backends.
 
 > **Note on `standard_circuit.circuit.registered`:** subscribers are wired up *after* the `StandardCircuit.configure` block yields, so any `c.register` calls inside that block fire before any subscriber can hear them. This event is reliable only for post-boot, dynamic `register` / `register_prefix` calls — do not rely on it for a boot-time circuit inventory.
 

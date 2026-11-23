@@ -42,6 +42,12 @@ module StandardCircuit
       end
     end
 
+    # What a `run` resolves to: the circuit (breaker) that guards the call,
+    # plus the dependency and purpose it is made for. +dependency+ and
+    # +purpose+ are nil for a name nothing was registered under; the runner
+    # then raises UnknownCircuit exactly as before (forced states aside).
+    RunTarget = Data.define(:circuit, :dependency, :purpose, :criticality)
+
     attr_accessor :sentry_enabled, :metric_prefix, :data_store, :logger
     attr_reader :circuits, :prefixes, :extra_notifiers, :sentry_criticality_levels, :mailer_retry
 
@@ -53,6 +59,9 @@ module StandardCircuit
       @logger = nil
       @circuits = {}
       @prefixes = {}
+      @dependencies = {}
+      @prefix_dependencies = {}
+      @circuit_owners = {}
       @extra_notifiers = []
       @extra_notifier_keys = []
       @mailer_retry = nil
@@ -91,13 +100,18 @@ module StandardCircuit
     def reset_registry!
       @circuits.clear
       @prefixes.clear
+      @dependencies.clear
+      @prefix_dependencies.clear
+      @circuit_owners.clear
       @extra_notifiers.clear
       @extra_notifier_keys.clear
     end
 
+    # Registers circuit +name+, and with it a breaker-only dependency of the
+    # same name with one implicit purpose (see DependencySpec).
     def register(name, **opts)
       spec = CircuitSpec.build(**opts)
-      @circuits[name.to_sym] = spec
+      install_dependency(DependencySpec.for_circuit(name, spec))
       EventEmitter.emit("standard_circuit.circuit.registered",
         circuit: name.to_s,
         criticality: spec.criticality,
@@ -105,9 +119,12 @@ module StandardCircuit
       spec
     end
 
+    # Registers every circuit named `<prefix>_<anything>`. They are the
+    # sub-circuits of one dependency named +prefix+.
     def register_prefix(prefix, **opts)
       spec = CircuitSpec.build(**opts)
       @prefixes[prefix.to_s] = spec
+      @prefix_dependencies[prefix.to_sym] = DependencySpec.for_prefix(prefix, spec)
       EventEmitter.emit("standard_circuit.circuit.registered",
         circuit: prefix.to_s,
         criticality: spec.criticality,
@@ -126,6 +143,72 @@ module StandardCircuit
     def register_preset(preset, name: preset, **overrides)
       scope, opts = Presets.resolve(preset, **overrides)
       scope == :prefix ? register_prefix(name, **opts) : register(name, **opts)
+    end
+
+    # Declare an external service the app depends on, with the reasons
+    # (purposes) it calls it:
+    #
+    #   c.dependency :stripe, criticality: :critical, threshold: 5,
+    #                tracked_errors: ErrorTaxonomies::Stripe.tracked
+    #
+    #   c.dependency :google_oauth, threshold: 3 do |d|
+    #     d.purpose :sign_in,  criticality: :critical
+    #     d.purpose :calendar, criticality: :standard
+    #   end
+    #
+    #   c.dependency :google_maps, criticality: :optional do |d|
+    #     d.purpose :places, default: true
+    #     d.purpose :address, isolate: true, threshold: 2   # breaker :google_maps_address
+    #   end
+    #
+    # Breaker options are the ones `register` takes. +criticality:+ is the
+    # default for each purpose. See DependencySpec for the rules. Re-declaring
+    # a dependency replaces it; a breaker name already owned by another
+    # dependency raises ArgumentError.
+    def dependency(name, **opts, &block)
+      spec = DependencySpec.define(name, **opts, &block)
+      install_dependency(spec)
+      spec.circuits.each do |circuit, circuit_spec|
+        EventEmitter.emit("standard_circuit.circuit.registered",
+          circuit: circuit.to_s,
+          criticality: circuit_spec.criticality,
+          scope: :name)
+      end
+      spec
+    end
+
+    # Every dependency, named ones first, then one per prefix registration.
+    def dependency_specs
+      @dependencies.values + @prefix_dependencies.values
+    end
+
+    # A named dependency wins over a prefix dependency of the same name.
+    def dependency_spec(name)
+      key = name.to_sym
+      @dependencies[key] || @prefix_dependencies[key] or
+        raise UnknownDependency, "no dependency registered for #{key.inspect}"
+    end
+
+    # Resolve what `run(name, purpose:)` guards. +name+ is a dependency, or a
+    # circuit: a prefix-matched one (`:s3_uploads`) or an isolated purpose's
+    # own breaker (`:google_maps_address`).
+    def run_target(name, purpose = nil)
+      key = name.to_sym
+      if (dependency = @dependencies[key])
+        target_for(dependency, dependency.resolve_purpose(purpose))
+      elsif (owner = @circuit_owners[key])
+        dependency = @dependencies.fetch(owner)
+        resolved = dependency.purposes.find { |p| p.circuit == key }
+        check_purpose!(dependency, resolved, purpose)
+        target_for(dependency, resolved)
+      elsif (dependency = prefix_dependency_for(key))
+        resolved = dependency.resolve_purpose(purpose)
+        RunTarget.new(circuit: key, dependency: dependency.name, purpose: resolved.name, criticality: resolved.criticality)
+      else
+        raise UnknownCircuit, "no circuit registered for #{key.inspect}" unless purpose.nil?
+
+        RunTarget.new(circuit: key, dependency: nil, purpose: nil, criticality: spec_for(key)&.criticality)
+      end
     end
 
     # Register a host-supplied subscriber. Subscribers must respond to
@@ -169,6 +252,51 @@ module StandardCircuit
     end
 
     private
+
+    # Swap in +spec+ for the dependency of the same name: drop the breakers the
+    # previous definition registered, then register the new ones. Breakers
+    # the new definition keeps are overwritten in place rather than deleted
+    # and re-added, so `circuits` (and so `health_report`) keeps its order.
+    def install_dependency(spec)
+      stale = @circuit_owners.select { |circuit, owner| owner == spec.name && !spec.circuits.key?(circuit) }
+      stale.each_key do |circuit|
+        @circuits.delete(circuit)
+        @circuit_owners.delete(circuit)
+      end
+
+      spec.circuits.each_key do |circuit|
+        owner = @circuit_owners[circuit]
+        next if owner.nil? || owner == spec.name
+
+        raise ArgumentError,
+          "circuit #{circuit.inspect} of dependency #{spec.name.inspect} is already registered by dependency #{owner.inspect}"
+      end
+
+      spec.circuits.each do |circuit, circuit_spec|
+        @circuits[circuit] = circuit_spec
+        @circuit_owners[circuit] = spec.name
+      end
+      @dependencies[spec.name] = spec
+    end
+
+    def target_for(dependency, purpose)
+      RunTarget.new(circuit: purpose.circuit, dependency: dependency.name, purpose: purpose.name,
+        criticality: purpose.criticality)
+    end
+
+    def check_purpose!(dependency, resolved, requested)
+      return if requested.nil? || requested.to_sym == resolved.name
+
+      raise UnknownPurpose,
+        "circuit #{resolved.circuit.inspect} is the breaker of purpose #{resolved.name.inspect} of dependency " \
+        "#{dependency.name.inspect}, not #{requested.inspect}"
+    end
+
+    def prefix_dependency_for(name)
+      key = name.to_s
+      _prefix, dependency = @prefix_dependencies.find { |prefix, _| key.start_with?("#{prefix}_") }
+      dependency
+    end
 
     def normalize_sentry_criticality_levels(value)
       case value
