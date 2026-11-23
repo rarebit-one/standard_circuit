@@ -139,6 +139,16 @@ RSpec.describe StandardCircuit::Dependency do
       }.to raise_error(ArgumentError, /isolate: true/)
     end
 
+    it "keeps a metrics-only prefix's sub-circuits discoverable" do
+      StandardCircuit.config.register_prefix(:s3, metrics_only: true, criticality: :standard)
+      StandardCircuit.run(:s3_uploads) { :ok }
+
+      expect(dependency(:s3).circuit_names).to eq([ :s3_uploads ])
+      expect(StandardCircuit.health_report[:circuits]).to include(a_hash_including(name: :s3_uploads, color: "green"))
+      expect(StandardCircuit.dependency_report.find { |r| r[:name] == :s3 }[:circuits].map { |c| c[:name] })
+        .to eq([ :s3_uploads ])
+    end
+
     it "works through register too" do
       StandardCircuit.config.register(:observed, threshold: 1, metrics_only: true, tracked_errors: [ RuntimeError ])
       3.times { fail_once(:observed) }

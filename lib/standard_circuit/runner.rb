@@ -157,12 +157,18 @@ module StandardCircuit
       raise e
     end
 
-    # A metrics-only breaker never blocks a call by any route: no light, no
-    # forced states, no locks. Everything else matches a breaker that is
-    # closed: a tracked error goes to the fallback when there is one, the
-    # same events and request metrics are emitted, with the same statuses.
+    # A metrics-only breaker never blocks a call by any route: the light is
+    # never consulted, and forced states and locks don't apply. Everything
+    # else matches a breaker that is closed: a tracked error goes to the
+    # fallback when there is one, the same events and request metrics are
+    # emitted, with the same statuses.
+    #
+    # The light is still built, though not run through, because the light
+    # cache is how prefix-matched circuits (`s3_uploads`) become known to
+    # Health.snapshot and Dependency#circuit_names.
     def execute_metrics_only(target, spec, fallback)
       name = target.circuit
+      light_for(name)
       started_at = monotonic_now
       result = begin
         yield

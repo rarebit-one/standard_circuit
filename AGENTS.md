@@ -82,7 +82,7 @@ end
 
 ### Stats and metrics_only
 
-`Stats::Subscriber` is an internal subscriber (wired by `Subscribers#internal_subscribers`) on `standard_circuit.run.completed`. It records into `StandardCircuit.stats`, a `Stats::Store` of fixed-size, mutex-guarded ring `Stats::Window`s keyed by dependency and by `[dependency, purpose]`. `configure` applies `config.stats_window_size` (resizing drops the windows) and `StandardCircuit.reset!` clears them. `CircuitSpec#metrics_only` makes `Runner#run` take `execute_metrics_only`: no light, forced states or locks, same events and request metrics, closed-breaker fallback semantics. `StandardCircuit.dependency_report` maps `Dependency#report` over every dependency; `health_report` is untouched.
+`Stats::Subscriber` is an internal subscriber (wired by `Subscribers#internal_subscribers`) on `standard_circuit.run.completed`. It records into `StandardCircuit.stats`, a `Stats::Store` of fixed-size, mutex-guarded ring `Stats::Window`s keyed by dependency and by `[dependency, purpose]`. `configure` applies `config.stats_window_size` (resizing drops the windows) and `StandardCircuit.reset!` clears them. `CircuitSpec#metrics_only` makes `Runner#run` take `execute_metrics_only`: the light is built (so prefix circuits stay discoverable) but never run through, forced states and locks are ignored, and events, request metrics and fallback semantics match a closed breaker. `StandardCircuit.dependency_report` maps `Dependency#report` over every dependency; `health_report` is untouched.
 
 ### Runner
 
