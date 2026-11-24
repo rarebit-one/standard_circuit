@@ -146,11 +146,10 @@ module StandardCircuit
     rescue Stoplight::Error::RedLight => e
       duration = duration_ms(started_at)
       emit_request_metric(name, :circuit_open, duration)
-      emit_run_completed(target, status: :circuit_open, duration_ms: duration, error: e, fallback_used: !fallback.nil?)
-      raise e unless fallback
+      return answer_with_fallback(target, fallback, reason: :circuit_open, duration_ms: duration, error: e) if fallback
 
-      emit_fallback_invoked(target, reason: :circuit_open)
-      fallback.call(nil)
+      emit_run_completed(target, status: :circuit_open, duration_ms: duration, error: e)
+      raise e
     rescue StandardError => e
       duration = duration_ms(started_at)
       emit_request_metric(name, :failure, duration)
@@ -239,18 +238,31 @@ module StandardCircuit
     def run_forced_open(target, fallback)
       name = target.circuit
       emit_request_metric(name, :circuit_open, 0)
-      emit_run_completed(target, status: :circuit_open, duration_ms: 0, fallback_used: !fallback.nil?)
-      if fallback
-        emit_fallback_invoked(target, reason: :forced_open)
-        return fallback.call(nil)
-      end
+      return answer_with_fallback(target, fallback, reason: :forced_open, duration_ms: 0) if fallback
 
+      emit_run_completed(target, status: :circuit_open, duration_ms: 0)
       spec = @config.spec_for(name)
       raise Stoplight::Error::RedLight.new(
         name.to_s,
         cool_off_time: spec&.cool_off_time || Config::DEFAULT_COOL_OFF,
         retry_after: nil
       )
+    end
+
+    # The runner's own fallback call, for a circuit the runner found open
+    # (forced open, or a RedLight raised inside the block). run.completed is
+    # emitted once the fallback has returned, so +fallback_used+ is only true
+    # when the caller really got its value; a fallback that raises propagates
+    # as before, reported with fallback_used: false.
+    def answer_with_fallback(target, fallback, reason:, duration_ms:, error: nil)
+      emit_fallback_invoked(target, reason: reason)
+      result = fallback.call(nil)
+    rescue StandardError
+      emit_run_completed(target, status: :circuit_open, duration_ms: duration_ms, error: error)
+      raise
+    else
+      emit_run_completed(target, status: :circuit_open, duration_ms: duration_ms, error: error, fallback_used: true)
+      result
     end
 
     def apply_force(name, state)

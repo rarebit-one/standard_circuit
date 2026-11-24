@@ -22,7 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   before. A metrics-only circuit reports an absorbed failure the same way.
 - `run.completed` gains `fallback_used:`, `true` whenever the caller got the
   fallback's value (an absorbed failure, an open or a forced-open circuit) and
-  `false` otherwise. Every existing key is unchanged.
+  `false` otherwise, including when the fallback itself raised. Every existing
+  key is unchanged. Where the runner calls the fallback itself (a forced-open
+  circuit, or a `RedLight` raised inside the block), `run.completed` is now
+  emitted once the fallback has returned, so it follows `fallback_invoked`
+  instead of preceding it.
 
 ### Upgrade notes
 

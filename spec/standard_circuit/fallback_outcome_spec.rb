@@ -187,6 +187,52 @@ RSpec.describe StandardCircuit, ".run fallback outcomes" do
     end
   end
 
+  describe "a fallback the runner calls itself that raises" do
+    it "reports fallback_used: false for a forced-open circuit, still emitting fallback_invoked" do
+      events = capture(/\Astandard_circuit\.(run|circuit)\./) do
+        described_class.force_open(:flaky) do
+          expect {
+            described_class.run(:flaky, fallback: ->(_e) { raise ArgumentError, "fallback broke" }) { :never }
+          }.to raise_error(ArgumentError, "fallback broke")
+        end
+      end
+
+      expect(events.map { |(name, payload)| [ name, payload.slice(:status, :reason, :fallback_used) ] }).to eq([
+        [ "standard_circuit.circuit.fallback_invoked", { reason: :forced_open } ],
+        [ "standard_circuit.run.completed", { status: :circuit_open, fallback_used: false } ]
+      ])
+    end
+  end
+
+  # An untracked RedLight raised inside the block (an inner circuit that is
+  # open) reaches the runner, which answers it with the fallback itself.
+  describe "a RedLight raised inside the block" do
+    let(:inner_red) { Stoplight::Error::RedLight.new("inner", cool_off_time: 60, retry_after: nil) }
+
+    it "reports status: :circuit_open and fallback_used: true once the fallback returned" do
+      calls = []
+      events = capture(/\Astandard_circuit\.(run|circuit)\./) do
+        expect(described_class.run(:flaky, fallback: ->(error) { calls << error; :degraded }) { raise inner_red }).to eq(:degraded)
+      end
+
+      expect(calls).to eq([ nil ])
+      expect(events.map { |(name, payload)| [ name, payload.slice(:status, :reason, :error_class, :fallback_used) ] }).to eq([
+        [ "standard_circuit.circuit.fallback_invoked", { reason: :circuit_open } ],
+        [ "standard_circuit.run.completed", { status: :circuit_open, error_class: "Stoplight::Error::RedLight", fallback_used: true } ]
+      ])
+    end
+
+    it "reports fallback_used: false when that fallback raises" do
+      payloads = completed do
+        expect {
+          described_class.run(:flaky, fallback: ->(_e) { raise ArgumentError, "fallback broke" }) { raise inner_red }
+        }.to raise_error(ArgumentError, "fallback broke")
+      end
+
+      expect(payloads.map { |p| p.slice(:status, :fallback_used) }).to eq([ { status: :circuit_open, fallback_used: false } ])
+    end
+  end
+
   describe "calls the fallback played no part in" do
     it "reports fallback_used: false on success, with or without a fallback" do
       payloads = completed do
