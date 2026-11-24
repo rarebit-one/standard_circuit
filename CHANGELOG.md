@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-11-24
+
+StandardCircuit no longer depends on stoplight internals: the runner builds
+its systems through stoplight's public API only. **No host code changes are
+needed.** Breaker state now survives a `configure` that changes nothing, and
+the RSpec helper keeps test suites from accumulating superseded stoplight
+systems. See the notes below on Redis and on what the helper resets.
+
 ### Changed
 
 - **Built on stoplight's public API only.** The runner no longer uses the undocumented
