@@ -33,11 +33,12 @@ RSpec.describe StandardCircuit::Runner do
       output
     end
 
-    it "uses no stoplight constant outside its public API" do
+    it "uses no stoplight constant outside its public API, bar the test helper's reset" do
       lib = File.expand_path("../../lib", __dir__)
-      offenders = Dir[File.join(lib, "**", "*.rb")].select { |file| File.read(file).match?(/Wiring::|__stoplight__/) }
+      sources = Dir[File.join(lib, "**", "*.rb")].to_h { |file| [ file.delete_prefix("#{lib}/"), File.read(file) ] }
 
-      expect(offenders).to be_empty
+      expect(sources.select { |_, source| source.include?("Wiring::") }.keys).to be_empty
+      expect(sources.select { |_, source| source.include?("__stoplight__") }.keys).to eq([ "standard_circuit/rspec.rb" ])
     end
 
     describe "a configure that changes nothing" do
@@ -145,7 +146,7 @@ RSpec.describe StandardCircuit::Runner do
     it "skips a generation name a host registered itself instead of raising" do
       configure_flaky
       StandardCircuit.run(:flaky) { :ok }
-      current = runner.system_name[/\d+\z/].to_i
+      current = runner.system_name[/_(\d+)\z/, 1]&.to_i || 1
       taken = [ current + 1, current + 2 ].map { |generation| "#{described_class::SYSTEM_NAME}_#{generation}" }
       taken.each { |name| Stoplight.register_system(name) }
 

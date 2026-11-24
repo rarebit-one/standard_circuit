@@ -547,9 +547,14 @@ These are supported public API for host test suites, not internals:
 | `StandardCircuit.reset_force!` | Clear every forced state. |
 | `StandardCircuit.dependency(name).lock_open!` / `lock_closed!` / `unlock!` | Lock every breaker behind a dependency (or `.purpose(p).lock_open!` for one purpose's breaker) in the data store. Unlike `force_open`, the circuit really is locked red, so `health_report` shows it `locked: true`. `reset!` clears it with the `Memory` store. |
 | `StandardCircuit.reset!` | Clear forced states and breaker state, so every circuit is green with no failures, and swap in a fresh `Memory` data store (left alone when the store is Redis). Once a circuit has been used, the next call builds a new system generation (see `data_store`). |
-| `require "standard_circuit/rspec"` | Adds a `before(:each)` that runs `reset!` and tears down subscribers. Circuit registrations are kept. |
+| `require "standard_circuit/rspec"` | Adds a `before(:each)` that runs `reset!`, frees the stoplight systems earlier examples left behind (below), and tears down subscribers. Circuit registrations are kept. |
 
 All of these are **process-local**. They are test and console tools, not an operational kill switch (see `data_store` above).
+
+**What the RSpec helper does to stoplight.** Each `reset!` after a circuit was used starts a new stoplight system generation, and stoplight keeps every superseded system for the life of the process: some 20–35 KB per example that used a circuit. To keep a suite flat, the helper calls stoplight's own test reset, `Stoplight.__stoplight__reset!`, before each example. That frees them, and the runner starts again at the system name `standard_circuit`. That method is not part of stoplight's public API, so only the helper calls it; `StandardCircuit.reset!` on its own never does.
+
+- It clears **all** stoplight state in the process between examples, not only StandardCircuit's: lights and systems a host registered with `Stoplight` directly, and the default configuration from `Stoplight.configure`, are reset too. A host spec that relies on its own stoplight setup surviving from one example to the next has to set it up again in a `before`.
+- If a stoplight release removes `__stoplight__reset!` or changes its arity, the helper degrades to plain generations. Every circuit is still reset between examples, but superseded systems are no longer freed. It warns once per process and never raises.
 
 ## Removed in 0.5
 

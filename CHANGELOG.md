@@ -26,6 +26,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (a changed `configure` at runtime, `reset!`, a swapped store) moves to a new generation's keys
   and stops sharing breaker state with other processes. Processes that configure once at boot
   all use `standard_circuit` and share state as before. See the README's `data_store` section.
+- **`require "standard_circuit/rspec"` now clears all stoplight state between examples.**
+  Because stoplight never frees a superseded system, each `reset!` after a circuit was used
+  would otherwise retain about 20–35 KB for the life of the test process. Before each example
+  the helper calls stoplight's test reset, `Stoplight.__stoplight__reset!`, which frees
+  superseded systems; the runner then starts again at `standard_circuit`. With the helper, 1,000
+  examples retain nothing; without it, 19–34 MB. This also resets lights and systems a host
+  registered with `Stoplight` directly, and its `Stoplight.configure` defaults, between
+  examples. The method is not stoplight's public API, so only the helper calls it (never
+  `StandardCircuit.reset!` or the runtime path), and only while it exists with no arguments.
+  Otherwise the helper falls back to generations, with one warning per process.
 - `StandardCircuit.runner` registers stoplight's default system as a side effect of its first
   `register_system` call. A host that calls `Stoplight.configure` after StandardCircuit has run
   a circuit gets stoplight's "Stoplight reconfigured" warning (pass

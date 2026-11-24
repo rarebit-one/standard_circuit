@@ -41,6 +41,15 @@ module StandardCircuit
         generation = @generation_mutex.synchronize { @generation += 1 }
         generation == 1 ? SYSTEM_NAME : "#{SYSTEM_NAME}_#{generation}"
       end
+
+      # Start naming from SYSTEM_NAME again. Only for when stoplight's own
+      # system registry has been emptied, so every name is free (the
+      # `standard_circuit/rspec` helper does that between examples); a name
+      # still taken is skipped as usual.
+      # @api private
+      def restart_generations!
+        @generation_mutex.synchronize { @generation = 0 }
+      end
     end
 
     def initialize(config = Config.new)
@@ -109,6 +118,20 @@ module StandardCircuit
       @system_mutex.synchronize do
         @rebuild_system = true
         @check_system = true
+      end
+    end
+
+    # Forget the current system and its lights, so the next call registers a
+    # new one. For when stoplight's registry was emptied underneath it (see
+    # Runner.restart_generations!); a normal rebuild goes through #system.
+    # @api private
+    def drop_system!
+      @system_mutex.synchronize do
+        @system_entry = nil
+        @lights.clear
+        @light_settings.clear
+        @check_system = false
+        @rebuild_system = false
       end
     end
 
