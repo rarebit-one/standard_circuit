@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-11-24
+
+Fixes on top of 0.7.0. **0.7.0 was published without #130**, the
+`StandardCircuit.runner` fix under "Fixed" below: the release tagger published
+0.7.0 from its release commit, and #130 landed on `main` straight afterwards.
+0.7.1 is the first release with it. 0.7.1 also makes `run.completed`, the
+request metric and the rolling stats report calls a fallback answered
+truthfully; see the upgrade notes.
+
 ### Changed
 
 - **`run.completed` reports the real outcome of a call a fallback answered.**
