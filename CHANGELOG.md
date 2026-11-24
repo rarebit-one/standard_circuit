@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`Retry-After` on circuit-open responses from `ControllerSupport`**, in
+  whole seconds (at least 1): until the breaker's recovery probe when the
+  `RedLight` carries `retry_after`, else the circuit's `cool_off_time`, else
+  omitted.
+- **`circuit_open_fallback`'s `json:` and `html:` lambdas may take the
+  `RedLight`.** Zero-arity lambdas and blocks are still called without it.
+
 ## [0.7.2] - 2026-11-24
 
 StandardCircuit no longer depends on stoplight internals: the runner builds
