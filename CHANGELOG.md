@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`run.completed` reports the real outcome of a call a fallback answered.**
+  Stoplight calls the fallback itself and returns its value, so the runner used
+  to see a normal return: a tracked failure the fallback absorbed, and a call
+  made while the circuit was open (not forced open), were both reported as
+  `status: :success`. They are now `:failure` (with the absorbed error's
+  `error_class` / `error_message`) and `:circuit_open`. The
+  `<metric_prefix>.request` metric's `status` attribute and the rolling stats
+  follow, so error rates are no longer understated where fallbacks are used.
+  The caller still gets the fallback's value, the fallback is called once with
+  the same argument as before, and the breaker counts exactly what it counted
+  before. A metrics-only circuit reports an absorbed failure the same way.
+- `run.completed` gains `fallback_used:`, `true` whenever the caller got the
+  fallback's value (an absorbed failure, an open or a forced-open circuit) and
+  `false` otherwise. Every existing key is unchanged.
+
+### Upgrade notes
+
+- Dashboards and alerts counting `run.completed` or
+  `<metric_prefix>.request` with `status: success` will see calls answered by a
+  fallback move out of `success`: absorbed failures to `failure`, calls made
+  while the circuit was open to `circuit_open`. Success rates drop and error
+  rates rise by exactly the share of such calls; nothing else changes.
+- `standard_circuit.circuit.fallback_invoked` is unchanged: it still fires only
+  for a forced-open circuit (and for a `RedLight` raised inside the block), not
+  for a failure or an open circuit stoplight hands to the fallback. Use
+  `run.completed`'s `fallback_used` to count those.
+
 ### Fixed
 
 - `StandardCircuit.runner` is bound to `StandardCircuit.config` from the start.

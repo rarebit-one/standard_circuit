@@ -133,19 +133,20 @@ module StandardCircuit
       started_at = monotonic_now
       light = light_for(name)
       spec = @config.spec_for(name)
+      outcome = FallbackOutcome.new(fallback)
 
       # The spec's error lists go in per run, which stoplight 6 still accepts
       # for any `===` matcher (procs, anonymous classes) — at registration it
       # only takes named classes/modules. See #build_light.
-      result = light.run(fallback, tracked_errors: spec.tracked_errors, skipped_errors: spec.skipped_errors, &block)
+      result = light.run(outcome.fallback, tracked_errors: spec.tracked_errors, skipped_errors: spec.skipped_errors, &block)
       duration = duration_ms(started_at)
-      emit_request_metric(name, :success, duration)
-      emit_run_completed(target, status: :success, duration_ms: duration)
+      emit_request_metric(name, outcome.status, duration)
+      emit_run_completed(target, status: outcome.status, duration_ms: duration, error: outcome.error, fallback_used: outcome.used?)
       result
     rescue Stoplight::Error::RedLight => e
       duration = duration_ms(started_at)
       emit_request_metric(name, :circuit_open, duration)
-      emit_run_completed(target, status: :circuit_open, duration_ms: duration, error: e)
+      emit_run_completed(target, status: :circuit_open, duration_ms: duration, error: e, fallback_used: !fallback.nil?)
       raise e unless fallback
 
       emit_fallback_invoked(target, reason: :circuit_open)
@@ -157,11 +158,45 @@ module StandardCircuit
       raise e
     end
 
+    # Stoplight calls the fallback itself, both for a tracked error the block
+    # raised (with that error) and while the light is red (with nil), and
+    # returns its value as if the block had returned it. Wrapping the fallback
+    # is how the runner learns which of the three happened, so run.completed
+    # and the request metric report the real outcome instead of :success.
+    class FallbackOutcome
+      attr_reader :error
+
+      def initialize(fallback)
+        @inner = fallback
+        @used = false
+      end
+
+      def fallback
+        return unless @inner
+
+        lambda do |error|
+          @used = true
+          @error = error
+          @inner.call(error)
+        end
+      end
+
+      def used? = @used
+
+      def status
+        return :success unless @used
+
+        @error ? :failure : :circuit_open
+      end
+    end
+    private_constant :FallbackOutcome
+
     # A metrics-only breaker never blocks a call by any route: the light is
     # never consulted, and forced states and locks don't apply. Everything
     # else matches a breaker that is closed: a tracked error goes to the
     # fallback when there is one, the same events and request metrics are
-    # emitted, with the same statuses.
+    # emitted, with the same statuses (:failure for a failure the fallback
+    # absorbed).
     #
     # The light is still built, though not run through, because the light
     # cache is how prefix-matched circuits (`s3_uploads`) become known to
@@ -170,16 +205,19 @@ module StandardCircuit
       name = target.circuit
       light_for(name)
       started_at = monotonic_now
+      absorbed = nil
       result = begin
         yield
       rescue StandardError => e
         raise unless fallback && tracked_error?(spec, e)
 
+        absorbed = e
         fallback.call(e)
       end
       duration = duration_ms(started_at)
-      emit_request_metric(name, :success, duration)
-      emit_run_completed(target, status: :success, duration_ms: duration)
+      status = absorbed ? :failure : :success
+      emit_request_metric(name, status, duration)
+      emit_run_completed(target, status: status, duration_ms: duration, error: absorbed, fallback_used: !absorbed.nil?)
       result
     rescue StandardError => e
       duration = duration_ms(started_at)
@@ -201,7 +239,7 @@ module StandardCircuit
     def run_forced_open(target, fallback)
       name = target.circuit
       emit_request_metric(name, :circuit_open, 0)
-      emit_run_completed(target, status: :circuit_open, duration_ms: 0)
+      emit_run_completed(target, status: :circuit_open, duration_ms: 0, fallback_used: !fallback.nil?)
       if fallback
         emit_fallback_invoked(target, reason: :forced_open)
         return fallback.call(nil)
@@ -314,7 +352,9 @@ module StandardCircuit
         criticality: target.criticality)
     end
 
-    def emit_run_completed(target, status:, duration_ms:, error: nil)
+    # +fallback_used+ is true when the caller got the fallback's value: a
+    # failure it absorbed, an open circuit, or a forced-open one.
+    def emit_run_completed(target, status:, duration_ms:, error: nil, fallback_used: false)
       EventEmitter.emit("standard_circuit.run.completed",
         circuit: target.circuit.to_s,
         status: status,
@@ -323,7 +363,8 @@ module StandardCircuit
         error_class: error&.class&.name,
         error_message: error&.message,
         dependency: target.dependency,
-        purpose: target.purpose)
+        purpose: target.purpose,
+        fallback_used: fallback_used)
     end
 
     def monotonic_now
