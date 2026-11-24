@@ -1,21 +1,67 @@
 module StandardCircuit
   class Runner
-    # Name of the Stoplight system that owns every light this gem builds. It
-    # namespaces Redis keys (`stoplight:v6:<system id>:...`), so it must stay
-    # stable across processes and deploys.
+    # Name of the first Stoplight system a process builds for this gem's
+    # lights. It namespaces Redis keys (`stoplight:v6:<system id>:...`), so
+    # every process that has not rebuilt shares breaker state under it. A
+    # rebuild registers the next generation, `standard_circuit_2` and so on:
+    # see #register_system.
     SYSTEM_NAME = "standard_circuit"
+
+    # Every system-level setting, pinned to stoplight's own defaults.
+    # `register_system` fills each setting it is not given from the
+    # process-global default config, i.e. the host's `Stoplight.configure`
+    # (whatever stoplight's docs say), and validates the result: a host on
+    # `traffic_control: :error_rate` with `threshold: 0.5` would otherwise make
+    # registration raise. The data store and notifiers are passed per system,
+    # and each light sets its own threshold, durations and error lists.
+    SYSTEM_SETTINGS = {
+      threshold: 3,
+      cool_off_time: 60,
+      window_size: nil,
+      tracked_errors: [ StandardError ].freeze,
+      skipped_errors: [].freeze,
+      recovery_threshold: 1,
+      traffic_control: :consecutive_errors,
+      traffic_recovery: :consecutive_successes,
+      error_notifier: ->(error) { warn error }
+    }.freeze
+
+    # What a system was built from (see #system).
+    SystemEntry = Data.define(:name, :system, :data_store, :config)
+    private_constant :SystemEntry
+
+    @generation_mutex = Mutex.new
+    @generation = 0
+
+    class << self
+      # The next system name this process has not used: SYSTEM_NAME, then
+      # SYSTEM_NAME_2, SYSTEM_NAME_3, ... Per process and shared by every
+      # Runner, because Stoplight's system registry is process-global.
+      def next_system_name
+        generation = @generation_mutex.synchronize { @generation += 1 }
+        generation == 1 ? SYSTEM_NAME : "#{SYSTEM_NAME}_#{generation}"
+      end
+    end
 
     def initialize(config = Config.new)
       @lights = Concurrent::Map.new
+      # The settings each cached light was registered with (see #reusable?).
+      @light_settings = Concurrent::Map.new
       @forced_states = Concurrent::Map.new
       @config = config
       @system_mutex = Mutex.new
       @system_entry = nil
+      @check_system = false
+      @rebuild_system = false
     end
 
+    # A changed config takes effect on the next call. The system is kept, with
+    # its breaker state, when the new config would build the same lights.
     def apply_config!(config)
-      @config = config
-      discard_system!
+      @system_mutex.synchronize do
+        @config = config
+        @check_system = true
+      end
     end
 
     # +name+ is a dependency or a circuit (see Config#run_target). Forced
@@ -60,7 +106,18 @@ module StandardCircuit
     def reset!
       @forced_states.clear
       @config.data_store = Stoplight::DataStore::Memory.new if @config.data_store.is_a?(Stoplight::DataStore::Memory)
-      discard_system!
+      @system_mutex.synchronize do
+        @rebuild_system = true
+        @check_system = true
+      end
+    end
+
+    # Name of the Stoplight system this runner's lights currently live in
+    # (SYSTEM_NAME or a later generation). For diagnostics and specs.
+    # @api private
+    def system_name
+      system
+      @system_entry.name
     end
 
     def light_for(name)
@@ -95,6 +152,7 @@ module StandardCircuit
     # prefix-matched circuits that have been exercised at least once — we can't
     # enumerate prefix-matched dynamic names any other way.
     def cached_lights
+      system # drops the cache first if a configure or reset! retired its system
       hash = {}
       @lights.each_pair { |name, light| hash[name] = light }
       hash
@@ -283,54 +341,105 @@ module StandardCircuit
     end
 
     # The Stoplight system for the current config and data store, built on
-    # first use. A data store swapped in after `configure` (as #reset! does,
-    # or a host assigning `config.data_store` directly) gets a new system, the
-    # same way 5.x lights picked up `@config.data_store` when they were built.
+    # first use. After a `configure`, a #reset! or a data store swapped in
+    # after `configure` (as #reset! does, or a host assigning
+    # `config.data_store` directly), the next call checks whether the current
+    # system can still serve: see #reusable?. If not, a new generation is
+    # registered and the light cache starts empty.
     def system
       entry = @system_entry
-      return entry.last if entry && entry.first.equal?(@config.data_store)
+      return entry.system if entry && !@check_system && entry.data_store.equal?(@config.data_store)
 
       @system_mutex.synchronize do
-        store = @config.data_store
-        unless @system_entry&.first.equal?(store)
+        entry = @system_entry
+        if entry && reusable?(entry)
+          # A reused Memory-backed system adopts the Memory store now in the
+          # config, so the fast path above matches it again.
+          entry = @system_entry = entry.with(data_store: @config.data_store)
+        else
           @lights.clear
-          @system_entry = [ store, build_system(store) ].freeze
+          @light_settings.clear
+          entry = @system_entry = build_system_entry
         end
-        @system_entry.last
+        @check_system = false
+        @rebuild_system = false
+        entry.system
       end
     end
 
-    def discard_system!
-      @system_mutex.synchronize do
-        @system_entry = nil
-        @lights.clear
+    # The current system can serve the current config when every light built
+    # in it is still configured with exactly the settings it was registered
+    # with, on the same data store and behind the same config object (which
+    # the notifier bridge reads), unless #reset! asked for fresh breaker
+    # state. Circuits not built yet register in it as they are first used, so
+    # adding a circuit keeps everyone else's state; changing or removing a
+    # built one cannot be done in place (stoplight refuses to re-register a
+    # light with other settings), so it means a new generation.
+    #
+    # A system no light was ever built in holds no state and no
+    # registrations, so a reset, a changed config, or a Memory store swapped
+    # for another Memory store (each is only a marker in stoplight 6) can all
+    # reuse it. That keeps a suite that calls reset! between examples from
+    # registering a system for every example that never runs a circuit.
+    def reusable?(entry)
+      return false unless entry.config.equal?(@config)
+      return same_store?(entry.data_store, @config.data_store) if @light_settings.empty?
+
+      !@rebuild_system && entry.data_store.equal?(@config.data_store) && built_lights_unchanged?
+    end
+
+    def built_lights_unchanged?
+      @light_settings.each_pair.all? do |name, settings|
+        spec = @config.spec_for(name)
+        spec && light_settings(spec) == settings
       end
     end
 
-    # Stoplight 6 caches one light per name inside a system and refuses to
-    # re-register a name with different settings, and its public
-    # `register_system` refuses to reuse a system name. Neither fits a runner
-    # that is reconfigured on every code reload and reset between specs, so
-    # each system gets its own Stoplight state rather than living in the
-    # process-global one. That also keeps it apart from a host's own
-    # `Stoplight.configure`.
-    def build_system(data_store)
-      state = Stoplight::Wiring::GlobalState.new(
-        default_config: Stoplight::Wiring::DefaultConfiguration.new.to_config!
-      )
-      state.register_system(SYSTEM_NAME, data_store: data_store, notifiers: [ NotifierBridge.new(@config) ])
+    def same_store?(built_with, current)
+      built_with.equal?(current) ||
+        (built_with.is_a?(Stoplight::DataStore::Memory) && current.is_a?(Stoplight::DataStore::Memory))
+    end
+
+    def build_system_entry
+      data_store = @config.data_store
+      name, system = register_system(data_store)
+      SystemEntry.new(name: name, system: system, data_store: data_store, config: @config)
+    end
+
+    # Registers the next generation through stoplight's public
+    # `Stoplight.register_system`. It refuses a name already in use and has no
+    # unregister, so a superseded generation stays registered with stoplight
+    # (the runner drops every reference to it), and a name a host registered
+    # itself is skipped rather than raising at boot.
+    def register_system(data_store)
+      loop do
+        name = self.class.next_system_name
+        begin
+          system = Stoplight.register_system(name, **SYSTEM_SETTINGS, data_store: data_store,
+                                                   notifiers: [ NotifierBridge.new(@config) ])
+          return [ name, system ]
+        rescue ArgumentError => e
+          raise unless e.message.include?("already in use")
+        end
+      end
     end
 
     def build_light(system, name)
       spec = @config.spec_for(name) or raise UnknownCircuit, "no circuit registered for #{name.inspect}"
 
-      system.register(
-        name.to_s,
+      settings = light_settings(spec)
+      light = system.register(name.to_s, **settings)
+      @light_settings[name] = settings
+      light
+    end
+
+    def light_settings(spec)
+      {
         threshold: spec.threshold,
         cool_off_time: whole_seconds(spec.cool_off_time),
         window_size: whole_seconds(spec.window_size),
         **registrable_errors(spec)
-      )
+      }
     end
 
     # Stoplight 6 takes only whole seconds, at least 1, for both durations.

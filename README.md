@@ -324,7 +324,11 @@ StandardCircuit.configure do |c|
 end
 ```
 
-StandardCircuit keeps its circuits in its own Stoplight system, named `standard_circuit`, separate from the process-global one a host configures with `Stoplight.configure`. So `Stoplight.light("stripe")` does not find a StandardCircuit circuit, and a host's own `Stoplight.configure` does not change StandardCircuit's store or notifiers. With Redis, keys are namespaced `stoplight:v6:<standard_circuit system id>:...`; stoplight 6 needs Redis 7.4+ (or Valkey 7.2+).
+StandardCircuit keeps its circuits in its own Stoplight system, registered through `Stoplight.register_system` and separate from the default one a host configures with `Stoplight.configure`. So `Stoplight.light("stripe")` does not find a StandardCircuit circuit, and a host's own `Stoplight.configure` does not change StandardCircuit's store, notifiers or breaker settings. Stoplight 6 needs Redis 7.4+ (or Valkey 7.2+).
+
+The first system a process builds is named `standard_circuit`. Stoplight never lets a system name be reused or unregistered, so when the runner has to rebuild, it registers the next **generation**, `standard_circuit_2`, `standard_circuit_3` and so on. That happens after a `configure` that changes or removes a circuit already in use, after `reset!` once a circuit has been used, and after `config.data_store` is pointed at a different store. A `configure` that changes nothing, or only adds circuits, keeps the current system and its breaker state. If a host has itself registered a stoplight system under one of these names, StandardCircuit skips to the next free one.
+
+With Redis this matters, because stoplight derives the key space from the system name: keys are `stoplight:v6:<id of the system name>:...`. Processes share breaker state only while they are on the same generation. Every process that boots and configures once, which is the production case, uses `standard_circuit` and shares state as before. A process that rebuilds (a changed `configure` at runtime, `reset!`, a swapped store) moves to its own key space and stops sharing state with the others. Generations are counted per process, so `standard_circuit_2` in one process is unrelated to `standard_circuit_2` in another. Keys of a superseded generation are not cleaned up; they expire as stoplight's do.
 
 ## Sentry reporting
 
@@ -542,7 +546,7 @@ These are supported public API for host test suites, not internals:
 | `StandardCircuit.force_closed(name) { ... }` | Bypass the circuit for the block — `run` just yields. No events. |
 | `StandardCircuit.reset_force!` | Clear every forced state. |
 | `StandardCircuit.dependency(name).lock_open!` / `lock_closed!` / `unlock!` | Lock every breaker behind a dependency (or `.purpose(p).lock_open!` for one purpose's breaker) in the data store. Unlike `force_open`, the circuit really is locked red, so `health_report` shows it `locked: true`. `reset!` clears it with the `Memory` store. |
-| `StandardCircuit.reset!` | Clear the light cache and forced states, and swap in a fresh `Memory` data store (left alone when the store is Redis). |
+| `StandardCircuit.reset!` | Clear forced states and breaker state, so every circuit is green with no failures, and swap in a fresh `Memory` data store (left alone when the store is Redis). Once a circuit has been used, the next call builds a new system generation (see `data_store`). |
 | `require "standard_circuit/rspec"` | Adds a `before(:each)` that runs `reset!` and tears down subscribers. Circuit registrations are kept. |
 
 All of these are **process-local**. They are test and console tools, not an operational kill switch (see `data_store` above).
