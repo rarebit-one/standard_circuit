@@ -123,10 +123,11 @@ module StandardCircuit
     end
 
     # Registers circuit +name+, and with it a breaker-only dependency of the
-    # same name with one implicit purpose (see DependencySpec).
-    def register(name, **opts)
+    # same name with one implicit purpose (see DependencySpec). +health:+
+    # takes the opt-in health-row rules (see HealthRules).
+    def register(name, health: nil, **opts)
       spec = CircuitSpec.build(**opts)
-      install_dependency(DependencySpec.for_circuit(name, spec))
+      install_dependency(DependencySpec.for_circuit(name, spec, health: health))
       EventEmitter.emit("standard_circuit.circuit.registered",
         circuit: name.to_s,
         criticality: spec.criticality,
@@ -136,10 +137,11 @@ module StandardCircuit
 
     # Registers every circuit named `<prefix>_<anything>`. They are the
     # sub-circuits of one dependency named +prefix+.
-    def register_prefix(prefix, **opts)
+    def register_prefix(prefix, health: nil, **opts)
       spec = CircuitSpec.build(**opts)
+      dependency = DependencySpec.for_prefix(prefix, spec, health: health)
       @prefixes[prefix.to_s] = spec
-      @prefix_dependencies[prefix.to_sym] = DependencySpec.for_prefix(prefix, spec)
+      @prefix_dependencies[prefix.to_sym] = dependency
       EventEmitter.emit("standard_circuit.circuit.registered",
         circuit: prefix.to_s,
         criticality: spec.criticality,
@@ -177,7 +179,8 @@ module StandardCircuit
     #   end
     #
     # Breaker options are the ones `register` takes. +criticality:+ is the
-    # default for each purpose. See DependencySpec for the rules. Re-declaring
+    # default for each purpose. +health:+ takes the opt-in health-row rules
+    # (`error_rate:`, `slow_ms:`, `min_calls:`; see HealthRules), off by default. See DependencySpec for the rules. Re-declaring
     # a dependency replaces it; a breaker name already owned by another
     # dependency raises ArgumentError.
     def dependency(name, **opts, &block)

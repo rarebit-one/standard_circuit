@@ -14,6 +14,8 @@ RSpec.describe StandardCircuit::Stats do
         counts: { success: 0, failure: 0, circuit_open: 0 },
         error_rate: nil,
         latency_ms: nil,
+        fallbacks: 0,
+        fallback_rate: nil,
         last_success_at: nil,
         last_failure_at: nil,
         consecutive_failures: 0
@@ -38,6 +40,14 @@ RSpec.describe StandardCircuit::Stats do
 
       # Nearest rank over the 9 attempted calls: p50 is the 5th, p95 the 9th.
       expect(window.snapshot[:latency_ms]).to eq(p50: 16.0, p95: 20.0)
+    end
+
+    it "rates calls answered by a fallback over every call, open-circuit ones included" do
+      2.times { window.record(:success, 10.0) }
+      window.record(:failure, 30.0, true)
+      window.record(:circuit_open, 0, true)
+
+      expect(window.snapshot).to include(calls: 4, fallbacks: 2, fallback_rate: 0.5, error_rate: 0.3333)
     end
 
     it "tracks last success, last failure and consecutive failures" do
@@ -118,6 +128,16 @@ RSpec.describe StandardCircuit::Stats do
       subscriber.call("standard_circuit.circuit.opened", circuit: "stripe")
 
       expect(store.for_dependency(:stripe)[:calls]).to eq(1)
+    end
+
+    it "records whether a fallback answered the call" do
+      subscriber.call("standard_circuit.run.completed",
+        dependency: :stripe, purpose: :default, status: :failure, duration_ms: 3.0, fallback_used: true)
+      subscriber.call("standard_circuit.run.completed",
+        dependency: :stripe, purpose: :default, status: :success, duration_ms: 3.0)
+
+      expect(store.for_dependency(:stripe)).to include(fallbacks: 1, fallback_rate: 0.5)
+      expect(store.for_purpose(:stripe, :default)).to include(fallbacks: 1)
     end
 
     it "never raises" do

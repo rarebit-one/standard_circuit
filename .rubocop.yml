@@ -24,6 +24,7 @@ RSpec/DescribeClass:
     - spec/active_storage/service/standard_circuit_s3_service_shim_spec.rb
     - spec/integration/health_route_boot_spec.rb
     - spec/integration/mailer_retry_load_order_spec.rb
+    - spec/standard_circuit/health_contribution_spec.rb
 
 # spec/support/*_app.rb are not specs — they're standalone Rails boot scripts
 # run as subprocesses, and their stdout IS the assertion surface.

@@ -19,15 +19,18 @@ require "standard_circuit/notifiers/sentry"
 require "standard_circuit/notifiers/metrics"
 require "standard_circuit/stats"
 require "standard_circuit/subscribers"
+require "standard_circuit/health_rules"
 require "standard_circuit/dependency_spec"
 require "standard_circuit/config"
 require "standard_circuit/dependency"
+require "standard_circuit/health_row"
 require "standard_circuit/health"
 require "standard_circuit/runner"
 require "standard_circuit/mailer/circuit_open_error"
 require "standard_circuit/mailer/delivery_method"
 require "standard_circuit/mailer/retry"
 require "standard_circuit/controller_support"
+require "standard_circuit/health_contribution"
 require "standard_circuit/engine" if defined?(::Rails::Engine)
 
 module StandardCircuit
@@ -102,15 +105,24 @@ module StandardCircuit
       stats.clear!
     end
 
+    # Breaker colors only, rolled up to :ok | :degraded | :critical. What
+    # standard_health < 0.10 folds into its aggregate tier as `circuits`.
+    # Superseded by `health_rows`; removed in 1.0 along with that fold-in.
     def health_report
       runner.health_report
     end
 
-    # One row per dependency, for a later standard_health contribution and
-    # for dashboards. health_report is unchanged and stays what
-    # standard_health reads today.
+    # One row per dependency, with stats per purpose, for dashboards and
+    # debugging. See Dependency#report.
     def dependency_report
       dependencies.map(&:report)
+    end
+
+    # One health row per dependency (see HealthRow): what StandardCircuit
+    # contributes to standard_health >= 0.10, which renders them as the
+    # aggregate tier's `dependencies`.
+    def health_rows
+      dependencies.map(&:health_row)
     end
   end
 end

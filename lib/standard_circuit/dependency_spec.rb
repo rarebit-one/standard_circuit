@@ -21,16 +21,17 @@ module StandardCircuit
       def default? = default
     end
 
-    attr_reader :name, :prefix, :purposes, :circuits
+    attr_reader :name, :prefix, :purposes, :circuits, :health_rules
 
     # Build from the `Config#dependency` DSL. +opts+ are the breaker options
     # `register` takes (threshold, cool_off_time, window_size, tracked_errors,
     # skipped_errors, metrics_only); +criticality+ is the default for every
-    # purpose.
-    def self.define(name, criticality: Config::DEFAULT_CRITICALITY, **opts)
+    # purpose; +health+ holds the opt-in health-row rules (see HealthRules).
+    def self.define(name, criticality: Config::DEFAULT_CRITICALITY, health: nil, **opts)
       name = name.to_sym
       validate_criticality!(criticality, "dependency #{name.inspect}")
       validate_breaker_options!(opts, "dependency #{name.inspect}")
+      health_rules = HealthRules.build(health, "dependency #{name.inspect}")
 
       builder = Builder.new(name, criticality)
       yield builder if block_given?
@@ -50,19 +51,21 @@ module StandardCircuit
           isolated: purpose.isolate, default: purpose.default)
       end
 
-      new(name: name, purposes: purposes, circuits: circuits)
+      new(name: name, purposes: purposes, circuits: circuits, health_rules: health_rules)
     end
 
     # The dependency a plain `register(name, ...)` stands for.
-    def self.for_circuit(name, spec)
+    def self.for_circuit(name, spec, health: nil)
       name = name.to_sym
-      new(name: name, purposes: [ implicit_purpose(spec, name) ], circuits: { name => spec })
+      new(name: name, purposes: [ implicit_purpose(spec, name) ], circuits: { name => spec },
+        health_rules: HealthRules.build(health, "circuit #{name.inspect}"))
     end
 
     # The dependency a `register_prefix(prefix, ...)` stands for. Its circuits
     # (`<prefix>_<suffix>`) are only known once they have been used.
-    def self.for_prefix(prefix, spec)
-      new(name: prefix.to_sym, purposes: [ implicit_purpose(spec, nil) ], circuits: {}, prefix: prefix.to_s)
+    def self.for_prefix(prefix, spec, health: nil)
+      new(name: prefix.to_sym, purposes: [ implicit_purpose(spec, nil) ], circuits: {}, prefix: prefix.to_s,
+        health_rules: HealthRules.build(health, "prefix #{prefix.to_s.inspect}"))
     end
 
     def self.implicit_purpose(spec, circuit)
@@ -89,11 +92,12 @@ module StandardCircuit
 
     private_class_method :new, :implicit_purpose
 
-    def initialize(name:, purposes:, circuits:, prefix: nil)
+    def initialize(name:, purposes:, circuits:, prefix: nil, health_rules: nil)
       @name = name
       @purposes = purposes.freeze
       @circuits = circuits.freeze
       @prefix = prefix
+      @health_rules = health_rules
       freeze
     end
 

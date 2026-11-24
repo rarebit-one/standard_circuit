@@ -9,12 +9,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Every dependency reports to StandardHealth.** With standard_health 0.10
+  or later in the bundle, StandardCircuit contributes one row per registered
+  dependency through standard_health's load hook, and standard_health renders
+  them as `dependencies` on its aggregate tier. Neither gem depends on the
+  other. On standard_health 0.9 nothing is contributed and its `circuits`
+  fold-in carries on as before. See "Reporting to StandardHealth" in the
+  README.
+  - A row carries `name`, `status`, `criticality`, `affected_purposes`,
+    `reasons`, `metrics_only`, `circuits` (`name`, `color`, `locked`) and four
+    `measurements`: `<dep>:errorRate`, `<dep>:p95Ms`, `<dep>:lastSuccessAt`
+    and `<dep>:fallbackRate`.
+  - Status follows the design table per purpose (breaker open: critical →
+    unavailable, standard → degraded; half-open or error rate over: degraded
+    unless optional; slow: degraded only if critical) and the row takes the
+    worst purpose. Only a critical dependency can be `unavailable`, and a
+    `metrics_only` one never is.
+  - `StandardCircuit.health_rows` and `Dependency#health_row` return them.
+- **Opt-in health rules**, off by default: `health: { error_rate:, slow_ms:,
+  min_calls: }` on `dependency`, `register`, `register_prefix` and
+  `register_preset`. A rule applies only once the purpose's window holds
+  `min_calls` (default 20) attempted calls. Malformed options raise at
+  configure time.
+- **Fallback rate in the rolling stats.** `stats` gains `fallbacks` and
+  `fallback_rate`: the share of calls in the window whose caller got a
+  fallback's value (`fallback_used: true`).
 - **`Retry-After` on circuit-open responses from `ControllerSupport`**, in
   whole seconds (at least 1): until the breaker's recovery probe when the
   `RedLight` carries `retry_after`, else the circuit's `cool_off_time`, else
   omitted.
 - **`circuit_open_fallback`'s `json:` and `html:` lambdas may take the
   `RedLight`.** Zero-arity lambdas and blocks are still called without it.
+
+### Changed
+
+- With standard_health 0.10 the aggregate status comes from the rows, and one
+  case differs from the old circuit roll-up: a `:standard` dependency whose
+  breaker is half-open is `degraded` (it was `ok`). The new error-rate and
+  slow findings stay off until a dependency declares `health:`.
+
+### Deprecated
+
+- `StandardCircuit.health_report`, and standard_health's `circuits` fold-in
+  that reads it, are superseded by the health rows and removed in 1.0.
+  `health_report` itself is unchanged until then.
 
 ## [0.7.2] - 2026-11-24
 
