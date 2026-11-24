@@ -65,6 +65,16 @@ A fallback may take the error (`->(error) { ... }`: the error the block raised,
 or `nil` once the circuit is open, since the block then never runs) or take
 nothing (`-> { ... }`, or a zero-arity `method(...)`); all are called correctly.
 
+A fallback is used for a **tracked** error the block raised, and instead of
+`RedLight` while the circuit is open or forced open. A skipped error, or one
+outside `tracked_errors`, is re-raised and the fallback is not called. Either
+way the caller gets the fallback's value, but the call is still reported as what
+it was: `run.completed`, the `<metric_prefix>.request` metric and the rolling
+stats say `:failure` for a failure the fallback absorbed and `:circuit_open`
+for an open circuit, and `run.completed` carries `fallback_used: true`. The
+absorbed failure counts towards tripping the breaker exactly as a raised one
+does.
+
 ## Error taxonomies
 
 `tracked_errors` decide what counts toward tripping a circuit; `skipped_errors` are re-raised without counting (and win over `tracked_errors` when a class matches both). `StandardCircuit::ErrorTaxonomies::<Adapter>.tracked` combines `NetworkErrors.defaults` with the adapter's server-side errors for `Stripe`, `Smtp`, `Aws`, `Faraday`, and `Postmark`; `StandardCircuit::AdapterErrors::<Adapter>.caller_errors` lists the adapter's caller-side (4xx-style) errors.
@@ -248,7 +258,7 @@ StandardCircuit.dependency(:google_oauth).purpose(:sign_in).stats
 ```
 
 - **No calls is not healthy.** A dependency or purpose with nothing recorded reports `calls: 0`, `error_rate: nil` and `latency_ms: nil`, so a critical purpose with no evidence can be told apart from one that is working.
-- `error_rate` and latency count **attempted** calls only. A `circuit_open` call never reached the upstream, so it is counted but is no evidence either way. A failure that a fallback absorbed is reported by `run.completed`, and so counted here, as `:success`, as it always has been.
+- `error_rate` and latency count **attempted** calls only. A `circuit_open` call never reached the upstream, so it is counted but is no evidence either way. A failure that a fallback absorbed counts as a failure here, and a call answered by the fallback while the circuit is open counts as `circuit_open` (see `run.completed` under [Events](#events)).
 - The window is the last `stats_window_size` calls (default 100), kept in a fixed ring per dependency and per purpose, so memory stays bounded however much traffic flows. `last_success_at`, `last_failure_at` and `consecutive_failures` outlive the ring.
 - **In-process only**: every worker has its own numbers, as with the default `Memory` store. `StandardCircuit.reset!` clears them. Recording never raises into the wrapped call.
 - The subscriber is wired with the others, by the engine at boot or by `configure`. A host test suite using `require "standard_circuit/rspec"` tears subscribers down before each example, so call `StandardCircuit.subscribers.setup!` in an example that reads stats.
@@ -345,11 +355,11 @@ Every circuit lifecycle moment is emitted as a Rails event. On Rails 8.1+ the ca
 | `standard_circuit.circuit.opened` | RED transition (circuit tripped) | `circuit:, from_color:, to_color:, criticality:, error_class:, error_message:` |
 | `standard_circuit.circuit.closed` | GREEN transition (recovered) | `circuit:, from_color:, to_color:, criticality:` |
 | `standard_circuit.circuit.degraded` | YELLOW transition (half-open probe) | `circuit:, from_color:, to_color:, criticality:` |
-| `standard_circuit.circuit.fallback_invoked` | Runner returned a fallback instead of raising RedLight | `circuit:, reason: (:circuit_open\|:forced_open), criticality:` |
+| `standard_circuit.circuit.fallback_invoked` | Runner returned a fallback instead of raising RedLight: a forced-open circuit, or a `RedLight` raised inside the block. Not emitted when stoplight hands a failure or an open circuit to the fallback; use `run.completed`'s `fallback_used` for those | `circuit:, reason: (:circuit_open\|:forced_open), criticality:` |
 | `standard_circuit.circuit.registered` | `Config#register` / `register_prefix` was called, or once per breaker a `Config#dependency` declares (see note below) | `circuit:, criticality:, scope: (:name\|:prefix)` |
-| `standard_circuit.run.completed` | Every wrapped `StandardCircuit.run` call (success, failure, or circuit_open) | `circuit:, status: (:success\|:failure\|:circuit_open), duration_ms:, criticality:, error_class:, error_message:, dependency:, purpose:` |
+| `standard_circuit.run.completed` | Every wrapped `StandardCircuit.run` call (success, failure, or circuit_open) | `circuit:, status: (:success\|:failure\|:circuit_open), duration_ms:, criticality:, error_class:, error_message:, dependency:, purpose:, fallback_used:` |
 
-> **Note on `standard_circuit.run.completed`:** the per-call event for cost / latency / success-rate dashboards. Fires on every `Runner#execute` invocation and on `force_open` runs; **not** emitted for `force_closed` runs (which intentionally bypass the runner). All payload keys are always present — `error_class` and `error_message` are `nil` on `:success`, and `dependency` / `purpose` are `nil` only for a forced name that was never registered. `criticality` is the purpose's (see [Dependencies and purposes](#dependencies-and-purposes)). Payload duration uses `duration_ms` (numeric), not `event.duration`, so subscribers work identically on the `Rails.event` and `ActiveSupport::Notifications` backends.
+> **Note on `standard_circuit.run.completed`:** the per-call event for cost / latency / success-rate dashboards. Fires on every `Runner#execute` invocation and on `force_open` runs; **not** emitted for `force_closed` runs (which intentionally bypass the runner). All payload keys are always present — `error_class` and `error_message` are `nil` on `:success` (and on a `:circuit_open` call answered by a fallback), and `dependency` / `purpose` are `nil` only for a forced name that was never registered. `status` is the call's real outcome even when a fallback answered it: a failure the fallback absorbed is `:failure`, with the absorbed error's `error_class` / `error_message`, and an open or forced-open circuit is `:circuit_open`. `fallback_used` is `true` whenever the caller got the fallback's value, `false` otherwise. `criticality` is the purpose's (see [Dependencies and purposes](#dependencies-and-purposes)). Payload duration uses `duration_ms` (numeric), not `event.duration`, so subscribers work identically on the `Rails.event` and `ActiveSupport::Notifications` backends.
 
 > **Note on `standard_circuit.circuit.registered`:** subscribers are wired up *after* the `StandardCircuit.configure` block yields, so any `c.register` calls inside that block fire before any subscriber can hear them. This event is reliable only for post-boot, dynamic `register` / `register_prefix` calls — do not rely on it for a boot-time circuit inventory.
 
