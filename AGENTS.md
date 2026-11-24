@@ -43,7 +43,10 @@ standard_circuit/
 │   ├── dependency.rb            # Runtime Dependency / Purpose handles (state, locks, stats, report)
 │   ├── stats.rb                 # Rolling per-dependency/per-purpose call stats + subscriber
 │   ├── runner.rb                # Light cache, run/force/reset, metrics
-│   ├── health.rb                # Snapshot + overall rollup helpers
+│   ├── health.rb                # Snapshot + overall rollup helpers (health_report)
+│   ├── health_rules.rb          # Opt-in error-rate / slow rules (`health:`)
+│   ├── health_row.rb            # Per-dependency row contributed to standard_health
+│   ├── health_contribution.rb   # ActiveSupport.on_load(:standard_health) hook
 │   ├── health_controller.rb     # Opt-in 503-on-critical health endpoint
 │   ├── controller_support.rb    # rescue_from RedLight concern
 │   ├── active_storage/
@@ -94,6 +97,10 @@ Stoplight 6 differences the runner absorbs, so the public behaviour matches the 
 
 `Health.snapshot(runner, config)` enumerates every named circuit plus any prefix-matched circuit already cached. `Health.overall(snapshot)` collapses to `:ok | :degraded | :critical` based on criticality + color. `StandardCircuit.health_report` returns both atomically — it is the only public reader (the separate `health_snapshot` / `health_overall` module readers were removed in 0.5).
 
+### Health rows (0.8)
+
+`HealthRow.build(dependency)` turns breaker state, criticality and the opt-in `HealthRules` into one row with four fixed measurements. `health_contribution.rb` hands `StandardCircuit.health_rows` to standard_health >= 0.10 via `contribute_dependencies`, guarded by `respond_to?` so standard_health 0.9 is left alone. Never add a runtime dependency on standard_health; specs use stand-in facades. Keep the measurement keys a fixed set.
+
 ### Notifiers
 
 The default notifier list is `[Logger, Sentry?, Metrics]` plus any registered via `config.add_notifier`. Sentry only fires on transitions to RED; Metrics emits on every transition keyed by `metric_prefix`.
@@ -133,6 +140,8 @@ Defaults live in `Config`:
 | `lib/standard_circuit/stats.rb` | Rolling per-dependency / per-purpose call stats and their subscriber |
 | `lib/standard_circuit/runner.rb` | Light cache, forced states, metrics emission |
 | `lib/standard_circuit/health.rb` | Snapshot + rollup logic |
+| `lib/standard_circuit/health_row.rb` | Health row and status table |
+| `lib/standard_circuit/health_contribution.rb` | standard_health load hook |
 | `lib/standard_circuit/controller_support.rb` | RedLight → 503 concern |
 | `lib/standard_circuit/network_errors.rb` | Default tracked-error list |
 | `spec/spec_helper.rb` | RSpec config + SimpleCov bootstrap |

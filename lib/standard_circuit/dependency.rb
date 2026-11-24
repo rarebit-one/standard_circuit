@@ -106,6 +106,13 @@ module StandardCircuit
       }
     end
 
+    # The row this dependency contributes to standard_health: status from
+    # breaker state, criticality and the opt-in health rules, plus four
+    # measurements. See HealthRow.
+    def health_row
+      HealthRow.build(self)
+    end
+
     # True when no purpose can be served: every purpose's breaker is open
     # (red, or forced open). For the usual one-breaker dependency that is
     # simply "its breaker is open". Half-open (yellow) is not open: calls go

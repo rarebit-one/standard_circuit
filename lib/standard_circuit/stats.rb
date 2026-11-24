@@ -10,7 +10,7 @@ module StandardCircuit
     DEFAULT_WINDOW_SIZE = 100
     STATUSES = [ :success, :failure, :circuit_open ].freeze
 
-    Sample = Struct.new(:status, :duration_ms)
+    Sample = Struct.new(:status, :duration_ms, :fallback_used)
 
     # The last +size+ calls for one dependency or purpose, plus a few
     # running values (last success/failure, consecutive failures) that
@@ -28,10 +28,10 @@ module StandardCircuit
         @consecutive_failures = 0
       end
 
-      def record(status, duration_ms)
+      def record(status, duration_ms, fallback_used = false)
         now = @clock.call
         @mutex.synchronize do
-          @samples[@next] = Sample.new(status, duration_ms)
+          @samples[@next] = Sample.new(status, duration_ms, fallback_used ? true : false)
           @next = (@next + 1) % @size
           @count += 1 if @count < @size
 
@@ -59,12 +59,15 @@ module StandardCircuit
 
     # +samples+ in any order. Error rate and latency count only attempted
     # calls (success + failure): a :circuit_open call never reached the
-    # upstream, so it is no evidence about it either way.
+    # upstream, so it is no evidence about it either way. Fallback rate is
+    # over every call in the window: the share whose caller got a fallback's
+    # value (an absorbed failure or an open circuit).
     def self.summarize(samples, window_size:, last_success_at: nil, last_failure_at: nil, consecutive_failures: 0)
       counts = STATUSES.to_h { |status| [ status, 0 ] }
       samples.each { |sample| counts[sample.status] += 1 if counts.key?(sample.status) }
       attempted = samples.select { |sample| sample.status == :success || sample.status == :failure }
       durations = attempted.map(&:duration_ms).compact.sort
+      fallbacks = samples.count(&:fallback_used)
 
       {
         calls: samples.size,
@@ -72,6 +75,8 @@ module StandardCircuit
         counts: counts,
         error_rate: attempted.empty? ? nil : (counts[:failure].to_f / attempted.size).round(4),
         latency_ms: durations.empty? ? nil : { p50: percentile(durations, 50), p95: percentile(durations, 95) },
+        fallbacks: fallbacks,
+        fallback_rate: samples.empty? ? nil : (fallbacks.to_f / samples.size).round(4),
         last_success_at: last_success_at,
         last_failure_at: last_failure_at,
         consecutive_failures: consecutive_failures
@@ -102,9 +107,9 @@ module StandardCircuit
         clear!
       end
 
-      def record(dependency, purpose, status, duration_ms)
-        window(dependency).record(status, duration_ms)
-        window([ dependency, purpose ]).record(status, duration_ms)
+      def record(dependency, purpose, status, duration_ms, fallback_used = false)
+        window(dependency).record(status, duration_ms, fallback_used)
+        window([ dependency, purpose ]).record(status, duration_ms, fallback_used)
       end
 
       def for_dependency(dependency)
@@ -145,7 +150,7 @@ module StandardCircuit
         dependency = payload[:dependency]
         return if dependency.nil?
 
-        @store.record(dependency, payload[:purpose], payload[:status], payload[:duration_ms])
+        @store.record(dependency, payload[:purpose], payload[:status], payload[:duration_ms], payload[:fallback_used])
       rescue StandardError => e
         warn "[StandardCircuit] stats recording failed: #{e.class}: #{e.message}"
       end

@@ -251,6 +251,8 @@ StandardCircuit.dependency(:google_oauth).purpose(:sign_in).stats
 #      counts: { success: 40, failure: 1, circuit_open: 1 },
 #      error_rate: 0.0244,        # failure / (success + failure)
 #      latency_ms: { p50: 81.2, p95: 240.5 },
+#      fallbacks: 3,              # calls whose caller got a fallback's value (0.8)
+#      fallback_rate: 0.0714,     # fallbacks / calls (0.8)
 #      last_success_at: 2026-11-23 12:00:03 UTC,
 #      last_failure_at: 2026-11-23 11:58:41 UTC,
 #      consecutive_failures: 0
@@ -259,6 +261,7 @@ StandardCircuit.dependency(:google_oauth).purpose(:sign_in).stats
 
 - **No calls is not healthy.** A dependency or purpose with nothing recorded reports `calls: 0`, `error_rate: nil` and `latency_ms: nil`, so a critical purpose with no evidence can be told apart from one that is working.
 - `error_rate` and latency count **attempted** calls only. A `circuit_open` call never reached the upstream, so it is counted but is no evidence either way. A failure that a fallback absorbed counts as a failure here, and a call answered by the fallback while the circuit is open counts as `circuit_open` (see `run.completed` under [Events](#events)).
+- `fallback_rate` is over **every** call in the window, open-circuit ones included: the share whose caller got a fallback's value instead of the upstream's (`fallback_used: true` on `run.completed`). A rising rate is worth a look before the breaker opens.
 - The window is the last `stats_window_size` calls (default 100), kept in a fixed ring per dependency and per purpose, so memory stays bounded however much traffic flows. `last_success_at`, `last_failure_at` and `consecutive_failures` outlive the ring.
 - **In-process only**: every worker has its own numbers, as with the default `Memory` store. `StandardCircuit.reset!` clears them. Recording never raises into the wrapped call.
 - The subscriber is wired with the others, by the engine at boot or by `configure`. A host test suite using `require "standard_circuit/rspec"` tears subscribers down before each example, so call `StandardCircuit.subscribers.setup!` in an example that reads stats.
@@ -300,7 +303,51 @@ StandardCircuit.dependency_report
 #    ]
 ```
 
-One row per dependency, including every `register` / `register_prefix` circuit. `StandardCircuit.health_report` is unchanged and stays what `standard_health` reads; a later release will contribute `dependency_report` there.
+One row per dependency, including every `register` / `register_prefix` circuit, with stats per purpose. It is for dashboards and debugging; what reaches `standard_health` is the smaller health row below.
+
+### Reporting to StandardHealth (0.8)
+
+With `standard_health` 0.10 or later in the bundle, StandardCircuit contributes **one row per dependency** through standard_health's load hook. Neither gem depends on the other: without standard_health the hook never runs. standard_health renders the rows as `dependencies` in its aggregate `GET /health`. Nothing to configure.
+
+```ruby
+StandardCircuit.health_rows          # every dependency; or StandardCircuit.dependency(:stripe).health_row
+# => [{ name: "stripe", status: :degraded, criticality: :critical,
+#       affected_purposes: ["checkout"], reasons: ["error_rate"], metrics_only: false,
+#       circuits: [{ name: "stripe", color: "green", locked: false }],
+#       measurements: { "stripe:errorRate" => 0.18, "stripe:p95Ms" => 2140.0,
+#                       "stripe:lastSuccessAt" => "2026-11-23T04:12:09Z",
+#                       "stripe:fallbackRate" => 0.04 } }]
+```
+
+**Status.** Each purpose is judged on its own breaker and its own stats, and the purpose's criticality decides what a finding costs. The row takes the worst purpose:
+
+| Finding (`reasons`) | Critical | Standard | Optional |
+|---|---|---|---|
+| Breaker open (`open`; red, locked or forced open) | unavailable | degraded | ok |
+| Half-open (`half_open`), or error rate over the rule (`error_rate`) | degraded | degraded | ok |
+| Slow (`slow`) | degraded | ok | ok |
+| None | ok | ok | ok |
+
+- `affected_purposes` lists every purpose with a finding, even one that costs nothing (an optional purpose's open breaker); `reasons` lists the findings.
+- **Only a `:critical` dependency can fail readiness, and dependencies never touch liveness.** standard_health enforces this too. A critical row that is `unavailable` 503s the aggregate tier; `/ready` ignores the rows unless the app sets standard_health's `ready_dependencies`.
+- **`metrics_only` dependencies report but never fail readiness**: their breaker never opens, so they have no breaker findings, and a row for one is never `unavailable`.
+- The breaker rows match `health_report`, except that a `:standard` purpose whose breaker is half-open is `degraded` here (`ok` in `health_report`).
+
+**Error-rate and slow rules are off by default.** New degraded states change what pages, so a dependency opts in:
+
+```ruby
+c.dependency :stripe, criticality: :critical, threshold: 5,
+             health: { error_rate: 0.25, slow_ms: 2000, min_calls: 20 }
+c.register :sendgrid, health: { error_rate: 0.5 }      # register / register_prefix / register_preset take it too
+```
+
+- `error_rate:` a share in (0, 1]; the purpose is `error_rate` when its error rate (failures over attempted calls) is at or above it.
+- `slow_ms:` the purpose is `slow` when its p95 latency is at or above this many milliseconds.
+- `min_calls:` (default 20) neither rule applies until the purpose's window holds this many attempted calls; an error rate over a handful of calls means little.
+
+**Measurements.** Exactly four per dependency, keyed `<dependency>:<name>` as in the IETF health-check draft, over the dependency's rolling window (all purposes): `errorRate`, `p95Ms`, `lastSuccessAt` (ISO 8601) and `fallbackRate`. `nil` means no evidence yet. The set is fixed, and dependency names are your registered names, so the number of series stays small: per-request values never become names.
+
+**standard_health 0.9** has no way to take these rows, so StandardCircuit contributes nothing there and 0.9 keeps folding `health_report` in as `circuits`. With standard_health 0.10, `circuits` is still rendered but deprecated, and no longer counts toward the status (the rows cover the same breakers); `health_report` and that fold-in go in 1.0.
 
 ## Circuit state storage (`data_store`)
 
@@ -503,7 +550,7 @@ Same pattern applies in background jobs (where `circuit_open_fallback` doesn't h
 
 ## Health endpoint
 
-StandardCircuit ships a controller that renders `StandardCircuit.health_report` as JSON. It returns 503 when the rolled-up status is `:critical` (so orchestrators pull the instance out of rotation) and 200 otherwise.
+StandardCircuit ships a controller that renders `StandardCircuit.health_report` as JSON. With `standard_health` 0.6 or later, prefer its `aggregate_endpoint`, which since 0.10 renders the [health rows](#reporting-to-standardhealth-08). It returns 503 when the rolled-up status is `:critical` (so orchestrators pull the instance out of rotation) and 200 otherwise.
 
 The controller lives in the engine's `app/controllers`, so it is autoloaded. The route is the only opt-in, and apps that don't draw it never load the controller.
 
