@@ -94,6 +94,117 @@ RSpec.describe StandardCircuit::ControllerSupport do
     end
   end
 
+  describe "the RedLight reaches the json:/html: lambdas (0.8)" do
+    let(:instance) { controller_class.new }
+    let(:red_light) { Stoplight::Error::RedLight.new("stripe", cool_off_time: 30, retry_after: nil) }
+
+    before { allow(instance).to receive(:response).and_return(ActionDispatch::Response.new) }
+
+    def dispatch(json:)
+      allow(instance).to receive(:request).and_return(double("req", format: double(json?: json)))
+      instance.send(:handle_circuit_open, red_light)
+    end
+
+    it "passes the error to a one-argument json lambda" do
+      controller_class.circuit_open_fallback(json: ->(error) { [ :json, error.light_name ] })
+
+      expect(dispatch(json: true)).to eq([ :json, "stripe" ])
+    end
+
+    it "passes the error to a one-argument html block, run in the controller" do
+      controller_class.circuit_open_fallback(html: proc { |error| [ self.class, error ] })
+
+      expect(dispatch(json: false)).to eq([ controller_class, red_light ])
+    end
+
+    it "passes the error to a lambda with optional or splat parameters" do
+      controller_class.circuit_open_fallback(json: ->(*args) { args })
+
+      expect(dispatch(json: true)).to eq([ red_light ])
+    end
+
+    it "still calls zero-arity lambdas and procs without arguments" do
+      controller_class.circuit_open_fallback(json: -> { :json_ok }, html: proc { :html_ok })
+
+      expect([ dispatch(json: true), dispatch(json: false) ]).to eq([ :json_ok, :html_ok ])
+    end
+  end
+
+  describe "Retry-After (0.8)" do
+    let(:instance) { controller_class.new }
+    let(:response) { ActionDispatch::Response.new }
+
+    before do
+      allow(instance).to receive_messages(response: response,
+        request: double("req", format: double(json?: false)))
+      allow(instance).to receive(:head)
+    end
+
+    def retry_after_for(error)
+      instance.send(:handle_circuit_open, error)
+      response.headers["Retry-After"]
+    end
+
+    def red_light(name = "stripe", retry_after: nil)
+      Stoplight::Error::RedLight.new(name, cool_off_time: 99, retry_after: retry_after)
+    end
+
+    it "counts down to the RedLight's recovery time, in whole seconds rounded up" do
+      expect(retry_after_for(red_light(retry_after: Time.now + 12.3))).to eq("13")
+    end
+
+    it "is at least 1 when the recovery time has already passed" do
+      expect(retry_after_for(red_light(retry_after: Time.now - 5))).to eq("1")
+    end
+
+    it "falls back to the circuit's cool_off_time when the light has no recovery time (locked or forced)" do
+      StandardCircuit.config.register(:stripe, cool_off_time: 45)
+
+      expect(retry_after_for(red_light)).to eq("45")
+    end
+
+    it "uses a prefix registration's cool_off_time" do
+      StandardCircuit.config.register_prefix(:s3, cool_off_time: 20.5)
+
+      expect(retry_after_for(red_light("s3_uploads"))).to eq("21")
+    end
+
+    it "is omitted when neither is known" do
+      expect(retry_after_for(red_light("unregistered"))).to be_nil
+    end
+
+    it "is set on json, html and bare head responses alike" do
+      StandardCircuit.config.register(:stripe, cool_off_time: 30)
+      controller_class.circuit_open_fallback(json: -> { :json })
+
+      allow(instance).to receive(:request).and_return(double("req", format: double(json?: true)))
+      expect(retry_after_for(red_light)).to eq("30")
+    end
+
+    it "counts down a tripped breaker's cool-off, from stoplight's recovery time" do
+      StandardCircuit.configure { |c| c.register(:ctrl_svc, threshold: 1, cool_off_time: 40, tracked_errors: [ IOError ]) }
+      expect { StandardCircuit.run(:ctrl_svc) { raise IOError } }.to raise_error(IOError)
+      error = begin
+        StandardCircuit.run(:ctrl_svc) { :unreachable }
+      rescue Stoplight::Error::RedLight => e
+        e
+      end
+
+      expect(retry_after_for(error).to_i).to be_between(39, 40)
+    end
+
+    it "is set for a forced-open circuit reached through a real run" do
+      StandardCircuit.configure { |c| c.register(:ctrl_svc, cool_off_time: 60) }
+      error = StandardCircuit.force_open(:ctrl_svc) do
+        StandardCircuit.run(:ctrl_svc) { :unreachable }
+      rescue Stoplight::Error::RedLight => e
+        e
+      end
+
+      expect(retry_after_for(error)).to eq("60")
+    end
+  end
+
   describe "circuit-open request metric" do
     let(:instance) { controller_class.new }
     let(:html_request) { double("req", format: double(json?: false)) }

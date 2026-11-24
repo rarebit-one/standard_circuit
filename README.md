@@ -516,6 +516,24 @@ c.add_notifier(CircuitAuditNotifier.new)
 
 Circuit registrations (`register` / `register_prefix` / `register_preset`) were already idempotent: the same name overwrites.
 
+## Controllers: `ControllerSupport`
+
+Include it to turn `Stoplight::Error::RedLight` into a 503, and customise the body:
+
+```ruby
+class ApplicationController < ActionController::Base
+  include StandardCircuit::ControllerSupport
+
+  circuit_open_fallback status: :service_unavailable,
+    json: ->(error) { render json: { error: "service_unavailable", circuit: error.light_name }, status: :service_unavailable },
+    html: -> { render "errors/service_unavailable", status: :service_unavailable }
+end
+```
+
+- `json:` and `html:` run in the controller. Since 0.8 they may take the `RedLight` (`->(error) { ... }`); zero-arity lambdas and blocks keep working.
+- **Every circuit-open response carries `Retry-After`** (0.8), in whole seconds and never less than 1: the time until the breaker's recovery probe when stoplight knows it, otherwise the circuit's `cool_off_time` (a breaker locked or forced open has no recovery time), otherwise no header. It is set before your lambda runs, so `render` and `head` both send it.
+- Declare `circuit_open_fallback` after any `rescue_from StandardError`, so the `RedLight` handler stays last.
+
 ## Streaming and non-controller contexts
 
 `ControllerSupport.circuit_open_fallback` only works for non-streaming responses — once a `Live` controller has flushed any output, Rails can't render an error template over the wire. For a streaming controller, catch `Stoplight::Error::RedLight` *inside* the streaming proc and write a degraded payload before the stream closes:
