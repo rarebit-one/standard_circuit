@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`StandardCircuit.retry_wait(*names, jitter: nil)`**, the `wait:` for a
+  job's `retry_on Stoplight::Error::RedLight`. Polynomial backoff
+  (`executions**4 + 2`) floored at the longest `cool_off_time` behind the
+  names, read at retry time, plus jitter on top of the floor (ActiveJob adds
+  none to a Proc `wait`; defaults to `ActiveJob::Base.retry_jitter`). Takes
+  circuits, dependencies (every breaker, isolated purposes included) and
+  prefixes. Replaces the waits jumpdrive-web, luminality-web and
+  nutripod-web hand-rolled. See "Jobs: retrying on an open circuit" in the
+  README.
+
 ## [0.8.0] - 2026-11-25
 
 Every dependency now reports to StandardHealth (0.10+) as a row with a

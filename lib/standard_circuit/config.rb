@@ -269,6 +269,17 @@ module StandardCircuit
       @circuits[name.to_sym] || spec_for_prefix(name)
     end
 
+    # The longest cool-off behind +name+: every breaker of a dependency
+    # (shared and isolated), a circuit (named, prefix-matched, or an isolated
+    # purpose's own), or a prefix. Raises UnknownCircuit. See RetryWait.
+    def cool_off_time_for(name)
+      key = name.to_sym
+      spec = @dependencies[key]&.circuits&.values&.max_by(&:cool_off_time) || spec_for(key) || @prefixes[key.to_s]
+      raise UnknownCircuit, "no circuit or dependency registered for #{key.inspect}" unless spec
+
+      spec.cool_off_time
+    end
+
     private
 
     # Swap in +spec+ for the dependency of the same name: drop the breakers the

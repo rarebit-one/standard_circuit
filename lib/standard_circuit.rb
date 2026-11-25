@@ -26,6 +26,7 @@ require "standard_circuit/dependency"
 require "standard_circuit/health_row"
 require "standard_circuit/health"
 require "standard_circuit/runner"
+require "standard_circuit/retry_wait"
 require "standard_circuit/mailer/circuit_open_error"
 require "standard_circuit/mailer/delivery_method"
 require "standard_circuit/mailer/retry"
@@ -86,6 +87,16 @@ module StandardCircuit
 
     def dependencies
       config.dependency_specs.map { |spec| Dependency.new(spec, runner, config) }
+    end
+
+    # The `wait:` for a job retrying on an open circuit:
+    #
+    #   retry_on Stoplight::Error::RedLight, wait: StandardCircuit.retry_wait(:stripe), attempts: 5
+    #
+    # Polynomial backoff floored at the longest cool-off behind +names+, plus
+    # jitter. See RetryWait.
+    def retry_wait(*names, jitter: nil)
+      RetryWait.build(names, jitter: jitter)
     end
 
     def force_open(name, &block)
