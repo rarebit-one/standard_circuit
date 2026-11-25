@@ -189,15 +189,22 @@ module StandardCircuit
     end
 
     # Lock +names+ to +state+; with a block, only for the block, then put
-    # each one back as it was, even if the block raises: relocked as an
-    # enclosing lock left it (so nested blocks don't cancel it), else
-    # unlocked. Returns the block's value.
+    # each one back as it was, even if the block (or locking a later name)
+    # raises: relocked as an enclosing lock left it (so nested blocks don't
+    # cancel it), else unlocked. Returns the block's value.
     def with_locks(names, state)
-      prior = names.to_h { |name| [ name.to_sym, @locks[name.to_sym] ] } if block_given?
-      names.each { |name| lock(name, state) }
-      return unless block_given?
+      keys = names.map(&:to_sym)
+      unless block_given?
+        keys.each { |key| lock(key, state) }
+        return
+      end
 
+      prior = {}
       begin
+        keys.each do |key|
+          prior[key] = @locks[key]
+          lock(key, state)
+        end
         yield
       ensure
         prior.each { |key, lock| lock ? apply_lock(key, lock) : unlock(key) }

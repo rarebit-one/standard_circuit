@@ -105,6 +105,18 @@ RSpec.describe StandardCircuit::Dependency do
       expect(StandardCircuit.runner.locked_circuits).to be_empty
     end
 
+    it "undoes the breakers it already locked when locking a later one fails" do
+      fallback_light = StandardCircuit.runner.light_for(:ruby_llm_fallback)
+      allow(fallback_light).to receive(:lock).and_raise(IOError, "store down")
+      ran = false
+
+      expect { dependency(:ruby_llm).lock_open! { ran = true } }.to raise_error(IOError)
+
+      expect(ran).to be(false)
+      expect(red?(:ruby_llm)).to be(false)
+      expect(StandardCircuit.runner.locked_circuits).to be_empty
+    end
+
     it "keeps a dependency-wide lock when a purpose block on a shared breaker ends" do
       llm = dependency(:ruby_llm)
       llm.lock_open!
