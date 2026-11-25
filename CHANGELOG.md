@@ -30,6 +30,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that locked it, and the three ways to clear locks. jumpdrive-web hit this
   leak before it loaded the RSpec helper.
 
+### Fixed
+
+- **`ControllerSupport` gives API clients the `json:` body.** Before, the
+  `json:` lambda ran only when `request.format.json?`, so an API client
+  sending `Accept: */*`, or no Accept header, got `html:` or a bodiless
+  `head`. Now `json:` also answers every request to an
+  `ActionController::API` controller and any request that doesn't accept
+  HTML. `ActionController::Base` controllers keep answering browsers,
+  `Accept: */*` and a missing Accept header with `html:`. A streaming
+  controller still prefers `stream:` unless the request asked for JSON. The
+  0.8 `Retry-After` header is unchanged.
+
 ## [0.8.0] - 2026-11-25
 
 Every dependency now reports to StandardHealth (0.10+) as a row with a

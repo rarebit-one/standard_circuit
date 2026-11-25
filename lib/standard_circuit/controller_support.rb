@@ -60,9 +60,24 @@ module StandardCircuit
 
       return call_circuit_open_fallback(fallback[:json], error) if request.format.json? && fallback[:json]
       return instance_exec(response, &fallback[:stream]) if streaming_controller? && fallback[:stream]
+      return call_circuit_open_fallback(fallback[:json], error) if fallback[:json] && circuit_open_api_request?
       return call_circuit_open_fallback(fallback[:html], error) if fallback[:html]
 
       head(fallback[:status] || :service_unavailable)
+    end
+
+    # An API client gets the `json:` body even when it didn't ask for JSON
+    # by name (0.8.1): every request to an ActionController::API controller,
+    # and any request that doesn't accept HTML. `Accept: */*` and a missing
+    # Accept header both accept HTML (Rails reads them as `*/*` and `html`),
+    # so an ActionController::Base controller keeps answering them with
+    # `html:`, as before.
+    def circuit_open_api_request?
+      return true if defined?(::ActionController::API) && self.class <= ::ActionController::API
+
+      # A parsed `*/*` is a symbol-less Mime::Type, not Mime::ALL, and answers
+      # html? false, so match the wildcard by its ref.
+      request.formats.none? { |format| format.html? || format.ref == "*/*" }
     end
 
     # `json:` / `html:` lambdas may take the RedLight (to name the circuit, or
