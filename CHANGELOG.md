@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-11-25
+
+Small additions and one fix, found while aligning the five apps on 0.8. A
+job helper that retries an open circuit after its cool-off; `json:` bodies
+for API clients that don't send a JSON Accept header; and lock ergonomics
+for test suites. **No host code changes are needed.** Each app can now
+delete some code it carries (see the README's "Replace your host code with"
+snippets).
+
 ### Added
 
 - **`StandardCircuit.retry_wait(*names, jitter: nil)`**, the `wait:` for a
