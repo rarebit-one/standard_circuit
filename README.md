@@ -575,7 +575,7 @@ class ChargeJob < ApplicationJob
 end
 ```
 
-- The wait is `:polynomially_longer`'s `executions**4 + 2` seconds, but never less than the circuit's `cool_off_time`. A retry that lands while the breaker is still cooling off fails fast and burns an attempt, which is what `:polynomially_longer` alone does on its first two retries (~3s, ~18s).
+- The wait is `:polynomially_longer`'s `executions**4 + 2` seconds, but never less than the circuit's `cool_off_time` (rounded up to whole seconds, as the breaker rounds it). A retry that lands while the breaker is still cooling off fails fast and burns an attempt, which is what `:polynomially_longer` alone does on its first two retries (~3s, ~18s).
 - The cool-off is read from the registration at retry time, so a `cool_off_time` change carries over.
 - Jitter is kept. ActiveJob adds no jitter to a Proc `wait`, so `retry_wait` adds it on top of the floor (never below it). It defaults to `ActiveJob::Base.retry_jitter` (0.15); pass `jitter:` to change it, e.g. `jitter: retry_jitter` in a job with its own, or `jitter: 0`.
 - Pass several names when a job's `RedLight` can come from several circuits: `StandardCircuit.retry_wait(:node_runner, :nomad, :broker)` floors at the longest cool-off. A dependency name covers all of its breakers, isolated purposes included; a prefix (`:s3`) or one of its circuits (`:s3_uploads`) works too.

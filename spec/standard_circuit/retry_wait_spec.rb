@@ -85,6 +85,21 @@ RSpec.describe StandardCircuit::RetryWait do
     end
   end
 
+  it "floors at the cool-off the breaker actually uses, rounded up to whole seconds" do
+    StandardCircuit.configure { |c| c.register(:stripe, cool_off_time: 45.5) }
+
+    without_jitter { expect(StandardCircuit.retry_wait(:stripe).call(1)).to eq(46) }
+  end
+
+  it "prefers an exact prefix over a broader prefix that also matches it" do
+    StandardCircuit.configure do |c|
+      c.register_prefix(:s3, cool_off_time: 30)
+      c.register_prefix(:s3_uploads, cool_off_time: 120)
+    end
+
+    without_jitter { expect(StandardCircuit.retry_wait(:s3_uploads).call(1)).to eq(120) }
+  end
+
   it "raises UnknownCircuit at retry time for a name nothing registered" do
     wait = StandardCircuit.retry_wait(:nope)
 
