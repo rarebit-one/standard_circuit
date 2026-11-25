@@ -15,8 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   For suites that don't load `standard_circuit/rspec`:
   `config.after { StandardCircuit.reset_locks! }`.
 - **Block form of `lock_open!` / `lock_closed!`**, on a dependency and on a
-  purpose: `dep.lock_open! { ... }` locks only for the block, unlocks even if
-  it raises, and returns the block's value. Without a block they still
+  purpose: `dep.lock_open! { ... }` locks only for the block, then puts each
+  breaker back as it was (an enclosing lock stays), even if the block
+  raises, and returns the block's value. Without a block they still
   return the handle.
 - **`purposes:` on `Dependency#lock_open!` / `lock_closed!` / `unlock!`.**
   The default, `:all`, is unchanged: every breaker behind the dependency,

@@ -50,6 +50,20 @@ RSpec.describe StandardCircuit::Dependency do
       expect(StandardCircuit.runner.locked_circuits).to be_empty
     end
 
+    it "keeps tracking a lock whose unlock failed, so reset_locks! can retry it" do
+      dependency(:stripe).lock_open!
+      light = StandardCircuit.runner.light_for(:stripe)
+      allow(light).to receive(:unlock).and_raise(IOError, "store down")
+
+      expect { StandardCircuit.reset_locks! }.to raise_error(IOError)
+      expect(StandardCircuit.runner.locked_circuits).to eq([ :stripe ])
+
+      allow(light).to receive(:unlock).and_call_original
+      StandardCircuit.reset_locks!
+      expect(StandardCircuit.runner.locked_circuits).to be_empty
+      expect(red?(:stripe)).to be(false)
+    end
+
     it "stops tracking a circuit once it is unlocked" do
       dependency(:stripe).lock_open!
       dependency(:stripe).unlock!
@@ -78,6 +92,27 @@ RSpec.describe StandardCircuit::Dependency do
       expect(dependency(:ruby_llm).purpose(:fallback).lock_open! { red?(:ruby_llm_fallback) }).to be(true)
 
       expect(red?(:ruby_llm_fallback)).to be(false)
+    end
+
+    it "puts an enclosing lock back when a nested block ends" do
+      dep = dependency(:stripe)
+
+      dep.lock_open! do
+        dep.lock_closed! { expect(red?(:stripe)).to be(false) }
+        expect(red?(:stripe)).to be(true)
+      end
+      expect(red?(:stripe)).to be(false)
+      expect(StandardCircuit.runner.locked_circuits).to be_empty
+    end
+
+    it "keeps a dependency-wide lock when a purpose block on a shared breaker ends" do
+      llm = dependency(:ruby_llm)
+      llm.lock_open!
+
+      llm.purpose(:primary).lock_closed! { expect(red?(:ruby_llm)).to be(false) }
+
+      expect(red?(:ruby_llm)).to be(true)
+      expect(red?(:ruby_llm_fallback)).to be(true)
     end
 
     it "still returns the handle without a block, so calls chain" do

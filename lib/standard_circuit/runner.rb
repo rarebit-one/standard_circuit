@@ -30,6 +30,11 @@ module StandardCircuit
     SystemEntry = Data.define(:name, :system, :data_store, :config)
     private_constant :SystemEntry
 
+    # A lock made through #lock: its state (:open / :closed) and the RSpec
+    # example that made it (nil outside one).
+    Lock = Data.define(:state, :example)
+    private_constant :Lock
+
     @generation_mutex = Mutex.new
     @generation = 0
 
@@ -57,9 +62,9 @@ module StandardCircuit
       # The settings each cached light was registered with (see #reusable?).
       @light_settings = Concurrent::Map.new
       @forced_states = Concurrent::Map.new
-      # Circuits locked through #lock, each with the RSpec example that locked
-      # it (nil outside one): what #reset_locks! undoes and what the leaked-
-      # lock warning checks (see #warn_if_lock_leaked).
+      # Circuits locked through #lock, each with its Lock: what #reset_locks!
+      # undoes, what a lock block restores, and what the leaked-lock warning
+      # checks (see #warn_if_lock_leaked).
       @locks = Concurrent::Map.new
       @config = config
       @system_mutex = Mutex.new
@@ -171,30 +176,31 @@ module StandardCircuit
     # process with Redis.
     # A no-op for a metrics-only circuit, whose light is never consulted.
     def lock(name, state)
-      key = name.to_sym
-      color = { open: Stoplight::Color::RED, closed: Stoplight::Color::GREEN }.fetch(state)
-      return if metrics_only?(key)
-
-      light_for(key).lock(color)
-      @locks[key] = current_test_example
+      apply_lock(name.to_sym, Lock.new(state: state, example: current_test_example))
     end
 
+    # The tracking entry goes only once the store has unlocked the light, so
+    # a failed unlock (say, Redis briefly down) can be retried by
+    # #reset_locks!.
     def unlock(name)
       key = name.to_sym
-      @locks.delete(key)
       light_for(key).unlock unless metrics_only?(key)
+      @locks.delete(key)
     end
 
-    # Lock +names+ to +state+; with a block, only for the block, unlocking
-    # them afterwards even if it raises. Returns the block's value.
+    # Lock +names+ to +state+; with a block, only for the block, then put
+    # each one back as it was, even if the block raises: relocked as an
+    # enclosing lock left it (so nested blocks don't cancel it), else
+    # unlocked. Returns the block's value.
     def with_locks(names, state)
+      prior = names.to_h { |name| [ name.to_sym, @locks[name.to_sym] ] } if block_given?
       names.each { |name| lock(name, state) }
       return unless block_given?
 
       begin
         yield
       ensure
-        names.each { |name| unlock(name) }
+        prior.each { |key, lock| lock ? apply_lock(key, lock) : unlock(key) }
       end
     end
 
@@ -350,6 +356,13 @@ module StandardCircuit
       @config.spec_for(name)&.metrics_only
     end
 
+    def apply_lock(key, lock)
+      return if metrics_only?(key)
+
+      light_for(key).lock({ open: Stoplight::Color::RED, closed: Stoplight::Color::GREEN }.fetch(lock.state))
+      @locks[key] = lock
+    end
+
     # A lock outlives the example that made it unless something clears it:
     # the standard_circuit/rspec helper, StandardCircuit.reset! or
     # reset_locks!, or the block form of lock_open!. Without one, a later
@@ -359,7 +372,7 @@ module StandardCircuit
     def warn_if_lock_leaked(circuit)
       return if @warned_leaked_lock
 
-      owner = @locks[circuit]
+      owner = @locks[circuit]&.example
       return if owner.nil? || owner.equal?(current_test_example)
 
       @warned_leaked_lock = true

@@ -139,8 +139,9 @@ module StandardCircuit
     # for every purpose that shares it. For a prefix dependency the breakers
     # are the sub-circuits used so far in this process.
     #
-    # With a block, the lock lasts only for the block (it is undone even if
-    # the block raises) and the block's value is returned. Without one, the
+    # With a block, the lock lasts only for the block: afterwards, even if it
+    # raises, each breaker goes back as it was (an enclosing lock stays), and
+    # the block's value is returned. Without one, the
     # lock stays until #unlock!, StandardCircuit.reset_locks! or
     # StandardCircuit.reset!, and the dependency is returned.
     def lock_open!(purposes: :all, &block)
