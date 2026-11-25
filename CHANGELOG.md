@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`StandardCircuit.retry_wait(*names, jitter: nil)`**, the `wait:` for a
+  job's `retry_on Stoplight::Error::RedLight`. Polynomial backoff
+  (`executions**4 + 2`) floored at the longest `cool_off_time` behind the
+  names (read at retry time, rounded up to whole seconds as the breaker
+  rounds it), plus jitter on top of the floor (ActiveJob adds
+  none to a Proc `wait`; defaults to `ActiveJob::Base.retry_jitter`). Takes
+  circuits, dependencies (every breaker, isolated purposes included) and
+  prefixes. Replaces the waits jumpdrive-web, luminality-web and
+  nutripod-web hand-rolled. See "Jobs: retrying on an open circuit" in the
+  README.
 - **`StandardCircuit.reset_locks!`** unlocks every circuit locked through
   `dependency(name).lock_open!` / `lock_closed!` (or a purpose's) in this
   process. Breaker state, forced states and the data store are left alone.

@@ -269,6 +269,21 @@ module StandardCircuit
       @circuits[name.to_sym] || spec_for_prefix(name)
     end
 
+    # The longest cool-off behind +name+: every breaker of a dependency
+    # (shared and isolated), a named circuit (an isolated purpose's own
+    # included), a prefix, or a prefix-matched circuit, in that order, so an
+    # exact prefix wins over a broader one that also matches it. Rounded up
+    # to whole seconds as the light's is (see Runner#light_settings). Raises
+    # UnknownCircuit. See RetryWait.
+    def cool_off_time_for(name)
+      key = name.to_sym
+      spec = @dependencies[key]&.circuits&.values&.max_by(&:cool_off_time) ||
+        @circuits[key] || @prefixes[key.to_s] || spec_for_prefix(key)
+      raise UnknownCircuit, "no circuit or dependency registered for #{key.inspect}" unless spec
+
+      [ spec.cool_off_time.ceil, 1 ].max
+    end
+
     private
 
     # Swap in +spec+ for the dependency of the same name: drop the breakers the
