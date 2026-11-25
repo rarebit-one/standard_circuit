@@ -30,6 +30,11 @@ module StandardCircuit
     SystemEntry = Data.define(:name, :system, :data_store, :config)
     private_constant :SystemEntry
 
+    # A lock made through #lock: its state (:open / :closed) and the RSpec
+    # example that made it (nil outside one).
+    Lock = Data.define(:state, :example)
+    private_constant :Lock
+
     @generation_mutex = Mutex.new
     @generation = 0
 
@@ -57,6 +62,10 @@ module StandardCircuit
       # The settings each cached light was registered with (see #reusable?).
       @light_settings = Concurrent::Map.new
       @forced_states = Concurrent::Map.new
+      # Circuits locked through #lock, each with its Lock: what #reset_locks!
+      # undoes, what a lock block restores, and what the leaked-lock warning
+      # checks (see #warn_if_lock_leaked).
+      @locks = Concurrent::Map.new
       @config = config
       @system_mutex = Mutex.new
       @system_entry = nil
@@ -82,6 +91,7 @@ module StandardCircuit
       spec = @config.spec_for(target.circuit)
       return execute_metrics_only(target, spec, fallback, &block) if spec&.metrics_only
 
+      warn_if_lock_leaked(target.circuit) unless @locks.empty?
       forced = @forced_states[target.circuit]
       return run_forced_open(target, fallback) if forced == :open
       return yield if forced == :closed
@@ -114,7 +124,10 @@ module StandardCircuit
     # a name forever. So a fresh store also means a fresh system (see #system).
     def reset!
       @forced_states.clear
-      @config.data_store = Stoplight::DataStore::Memory.new if @config.data_store.is_a?(Stoplight::DataStore::Memory)
+      if @config.data_store.is_a?(Stoplight::DataStore::Memory)
+        @config.data_store = Stoplight::DataStore::Memory.new
+        @locks.clear # they lived in the store just dropped
+      end
       @system_mutex.synchronize do
         @rebuild_system = true
         @check_system = true
@@ -163,12 +176,52 @@ module StandardCircuit
     # process with Redis.
     # A no-op for a metrics-only circuit, whose light is never consulted.
     def lock(name, state)
-      color = { open: Stoplight::Color::RED, closed: Stoplight::Color::GREEN }.fetch(state)
-      light_for(name).lock(color) unless metrics_only?(name)
+      apply_lock(name.to_sym, Lock.new(state: state, example: current_test_example))
     end
 
+    # The tracking entry goes only once the store has unlocked the light, so
+    # a failed unlock (say, Redis briefly down) can be retried by
+    # #reset_locks!.
     def unlock(name)
-      light_for(name).unlock unless metrics_only?(name)
+      key = name.to_sym
+      light_for(key).unlock unless metrics_only?(key)
+      @locks.delete(key)
+    end
+
+    # Lock +names+ to +state+; with a block, only for the block, then put
+    # each one back as it was, even if the block (or locking a later name)
+    # raises: relocked as an enclosing lock left it (so nested blocks don't
+    # cancel it), else unlocked. Returns the block's value.
+    def with_locks(names, state)
+      keys = names.map(&:to_sym)
+      unless block_given?
+        keys.each { |key| lock(key, state) }
+        return
+      end
+
+      prior = {}
+      begin
+        keys.each do |key|
+          prior[key] = @locks[key]
+          lock(key, state)
+        end
+        yield
+      ensure
+        prior.each { |key, lock| lock ? apply_lock(key, lock) : unlock(key) }
+      end
+    end
+
+    # Unlock every circuit this runner locked and has not unlocked since.
+    # Unlike #reset!, breaker state, forced states and the data store are
+    # left alone. With a Redis store, a lock another process made is not
+    # this runner's to undo.
+    def reset_locks!
+      @locks.keys.each { |name| unlock(name) }
+    end
+
+    # Names of the circuits locked through #lock and not yet unlocked.
+    def locked_circuits
+      @locks.keys
     end
 
     # Snapshot Hash of the current cached lights. Used by Health to discover
@@ -308,6 +361,36 @@ module StandardCircuit
 
     def metrics_only?(name)
       @config.spec_for(name)&.metrics_only
+    end
+
+    def apply_lock(key, lock)
+      return if metrics_only?(key)
+
+      light_for(key).lock({ open: Stoplight::Color::RED, closed: Stoplight::Color::GREEN }.fetch(lock.state))
+      @locks[key] = lock
+    end
+
+    # A lock outlives the example that made it unless something clears it:
+    # the standard_circuit/rspec helper, StandardCircuit.reset! or
+    # reset_locks!, or the block form of lock_open!. Without one, a later
+    # example meets a breaker that is still locked, and fails for no reason
+    # it can see. Warn once per process when a call reaches a circuit locked
+    # by a different RSpec example.
+    def warn_if_lock_leaked(circuit)
+      return if @warned_leaked_lock
+
+      owner = @locks[circuit]&.example
+      return if owner.nil? || owner.equal?(current_test_example)
+
+      @warned_leaked_lock = true
+      warn "[StandardCircuit] #{circuit.inspect} is still locked by an earlier example " \
+           "(#{owner.respond_to?(:location) ? owner.location : owner}). Locks are not cleared between " \
+           "examples unless something clears them: require \"standard_circuit/rspec\" in your spec helper, " \
+           "call StandardCircuit.reset_locks! in an after hook, or pass lock_open! a block."
+    end
+
+    def current_test_example
+      ::RSpec.current_example if defined?(::RSpec) && ::RSpec.respond_to?(:current_example)
     end
 
     # Stoplight's rule: skipped wins over tracked.

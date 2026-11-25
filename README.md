@@ -217,10 +217,15 @@ dep = StandardCircuit.dependency(:google_maps)
 dep.purpose(:address).open?        # an isolated purpose has its own breaker
 dep.purpose(:address).status
 dep.purpose(:address).lock_open!   # locks only :google_maps_address
+
+dep.lock_open!                      # every breaker: :google_maps and :google_maps_address
+dep.lock_open!(purposes: :places)   # only the breaker :places uses (0.8.1)
+dep.lock_open! { checkout! }        # only for the block; returns its value (0.8.1)
 ```
 
 - `status` takes the worst purpose. Each purpose applies the `health_report` rule to its own criticality and breaker color: critical + red is `:unavailable`; critical + yellow or standard + red is `:degraded`; optional never elevates. A red shared breaker therefore makes `:google_oauth` unavailable through `:sign_in`, even though `:calendar` alone would only be degraded. Error rate and latency don't affect `status`.
 - A dependency is `open?` when no purpose can be served, meaning every purpose's breaker is open. For the usual one-breaker dependency that is simply "its breaker is open". `force_open` / `force_closed` count, as they do for `run`. `circuits` shows the light's own `color` and the `forced` override side by side.
+- `Dependency#lock_open!` / `lock_closed!` / `unlock!` cover **every** breaker behind the dependency by default, isolated purposes' own included, so `open?` is true after `lock_open!`. Pass `purposes:` (a purpose name, or an Array) to lock only those purposes' breakers, e.g. to test that an isolated fallback still serves while the primary is open. `purposes: :all` is the default, spelled out.
 - Locking through a purpose that shares the dependency's breaker locks that breaker for every purpose sharing it. A prefix dependency (`register_prefix(:s3)`) locks the `s3_*` sub-circuits used so far in the process, and is `open?` only when all of them are open.
 - State is **per process** with the default `Memory` store, like everything else here (see `data_store` below). With a Redis store, locks are shared by every process, which makes `lock_open!` a fleet-wide switch.
 
@@ -661,11 +666,27 @@ These are supported public API for host test suites, not internals:
 | `StandardCircuit.force_open(name) { ... }` | Treat `name` as open for the block (or until `reset_force!` without a block): `run` raises `Stoplight::Error::RedLight`, or returns the fallback. Emits the same `run.completed` / `fallback_invoked` events as a real open circuit. |
 | `StandardCircuit.force_closed(name) { ... }` | Bypass the circuit for the block — `run` just yields. No events. |
 | `StandardCircuit.reset_force!` | Clear every forced state. |
-| `StandardCircuit.dependency(name).lock_open!` / `lock_closed!` / `unlock!` | Lock every breaker behind a dependency (or `.purpose(p).lock_open!` for one purpose's breaker) in the data store. Unlike `force_open`, the circuit really is locked red, so `health_report` shows it `locked: true`. `reset!` clears it with the `Memory` store. |
+| `StandardCircuit.dependency(name).lock_open!` / `lock_closed!` / `unlock!` | Lock every breaker behind a dependency (`purposes:` narrows it; or `.purpose(p).lock_open!` for one purpose's breaker) in the data store. Unlike `force_open`, the circuit really is locked red, so `health_report` shows it `locked: true`. With a block, the lock lasts only for the block, after which each breaker goes back to how it was (an enclosing lock is kept). Otherwise it stays until `unlock!`, `reset_locks!` or `reset!` (with the `Memory` store). |
+| `StandardCircuit.reset_locks!` | Unlock every circuit locked through the lock API in this process (0.8.1). Leaves breaker state, forced states and the data store alone. |
 | `StandardCircuit.reset!` | Clear forced states and breaker state, so every circuit is green with no failures, and swap in a fresh `Memory` data store (left alone when the store is Redis). Once a circuit has been used, the next call builds a new system generation (see `data_store`). |
 | `require "standard_circuit/rspec"` | Adds a `before(:each)` that runs `reset!`, frees the stoplight systems earlier examples left behind (below), and tears down subscribers. Circuit registrations are kept. |
 
 All of these are **process-local**. They are test and console tools, not an operational kill switch (see `data_store` above).
+
+**Locks outlive the example that made them.** A lock lives in the data store, so it is still there in the next example unless something clears it. Pick one:
+
+```ruby
+# spec/rails_helper.rb: resets everything before each example (recommended)
+require "standard_circuit/rspec"
+
+# or, without the helper: clear locks after each example
+RSpec.configure { |config| config.after { StandardCircuit.reset_locks! } }
+
+# or lock only for the code under test
+StandardCircuit.dependency(:stripe).lock_open! { post checkout_path }
+```
+
+When a call reaches a circuit that a different RSpec example locked, StandardCircuit prints one warning per process naming the circuit and the example that locked it (0.8.1). The next example to fail then shows its real cause.
 
 **What the RSpec helper does to stoplight.** Each `reset!` after a circuit was used starts a new stoplight system generation, and stoplight keeps every superseded system for the life of the process: some 20–35 KB per example that used a circuit. To keep a suite flat, the helper calls stoplight's own test reset, `Stoplight.__stoplight__reset!`, before each example. That frees them, and the runner starts again at the system name `standard_circuit`. That method is not part of stoplight's public API, so only the helper calls it; `StandardCircuit.reset!` on its own never does.
 

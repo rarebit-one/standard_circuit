@@ -127,6 +127,7 @@ Defaults live in `Config`:
 
 - RSpec only; no FactoryBot. Specs live in `spec/standard_circuit/` and `spec/active_storage/`.
 - `spec_helper.rb` resets state in `before` (registry + lights + memory data store), and SimpleCov is loaded at the top with branch coverage enabled.
+- Locks (`Dependency#lock_open!`) are tracked per runner: `StandardCircuit.reset_locks!` undoes them, the block form undoes them itself, and `run` warns once when it meets a lock another RSpec example left behind (0.8.1).
 - `lib/standard_circuit/rspec.rb` is a host-app convenience: `require "standard_circuit/rspec"` in a consumer's `rails_helper.rb` to get auto-`reset!` between examples.
 - The Gemfile keeps `aws-sdk-s3`, `stripe`, `faraday`, and the `action*` Rails libs in the `:test` group so the gem itself stays Rails-optional in production.
 
