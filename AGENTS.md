@@ -43,6 +43,7 @@ standard_circuit/
 │   ├── dependency.rb            # Runtime Dependency / Purpose handles (state, locks, stats, report)
 │   ├── stats.rb                 # Rolling per-dependency/per-purpose call stats + subscriber
 │   ├── runner.rb                # Light cache, run/force/reset, metrics
+│   ├── retry_wait.rb            # Cool-off-floored job retry wait (StandardCircuit.retry_wait)
 │   ├── health.rb                # Snapshot + overall rollup helpers (health_report)
 │   ├── health_rules.rb          # Opt-in error-rate / slow rules (`health:`)
 │   ├── health_row.rb            # Per-dependency row contributed to standard_health
