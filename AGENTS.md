@@ -113,7 +113,7 @@ The default notifier list is `[Logger, Sentry?, Metrics]` plus any registered vi
 
 ### ControllerSupport
 
-Mix into any controller to turn `Stoplight::Error::RedLight` into a configurable 503. `circuit_open_fallback(html:, json:, stream:, status:)` lets controllers customize the rendered body; `json:`/`html:` receive the RedLight when their arity allows. Every circuit-open response gets `Retry-After` (RedLight `retry_after`, else the circuit's `cool_off_time`).
+Mix into any controller to turn `Stoplight::Error::RedLight` into a configurable 503. `circuit_open_fallback(html:, json:, stream:, status:)` lets controllers customize the rendered body; `json:`/`html:` receive the RedLight when their arity allows; `json:` also answers `ActionController::API` controllers and requests that don't accept HTML (0.8.1). Every circuit-open response gets `Retry-After` (RedLight `retry_after`, else the circuit's `cool_off_time`).
 
 ## Configuration
 

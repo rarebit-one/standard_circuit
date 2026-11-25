@@ -12,12 +12,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`StandardCircuit.retry_wait(*names, jitter: nil)`**, the `wait:` for a
   job's `retry_on Stoplight::Error::RedLight`. Polynomial backoff
   (`executions**4 + 2`) floored at the longest `cool_off_time` behind the
-  names, read at retry time, plus jitter on top of the floor (ActiveJob adds
+  names (read at retry time, rounded up to whole seconds as the breaker
+  rounds it), plus jitter on top of the floor (ActiveJob adds
   none to a Proc `wait`; defaults to `ActiveJob::Base.retry_jitter`). Takes
   circuits, dependencies (every breaker, isolated purposes included) and
   prefixes. Replaces the waits jumpdrive-web, luminality-web and
   nutripod-web hand-rolled. See "Jobs: retrying on an open circuit" in the
   README.
+
+### Fixed
+
+- **`ControllerSupport` gives API clients the `json:` body.** Before, the
+  `json:` lambda ran only when `request.format.json?`, so an API client
+  sending `Accept: */*`, or no Accept header, got `html:` or a bodiless
+  `head`. Now `json:` also answers every request to an
+  `ActionController::API` controller and any request that doesn't accept
+  HTML. `ActionController::Base` controllers keep answering browsers,
+  `Accept: */*` and a missing Accept header with `html:`. A streaming
+  controller still prefers `stream:` unless the request asked for JSON. The
+  0.8 `Retry-After` header is unchanged.
 
 ## [0.8.0] - 2026-11-25
 
