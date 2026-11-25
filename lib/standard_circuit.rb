@@ -105,6 +105,17 @@ module StandardCircuit
       stats.clear!
     end
 
+    # Unlock every circuit locked through `dependency(name).lock_open!` /
+    # `lock_closed!` (or a purpose's) in this process and not unlocked since.
+    # For a test suite that doesn't load standard_circuit/rspec:
+    #
+    #   config.after { StandardCircuit.reset_locks! }
+    #
+    # Breaker state, forced states and the data store are left alone.
+    def reset_locks!
+      runner.reset_locks!
+    end
+
     # Breaker colors only, rolled up to :ok | :degraded | :critical. What
     # standard_health < 0.10 folds into its aggregate tier as `circuits`.
     # Superseded by `health_rows`; removed in 1.0 along with that fold-in.

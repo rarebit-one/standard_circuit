@@ -129,22 +129,30 @@ module StandardCircuit
       purposes.map(&:status).max_by { |status| STATUS_RANK.fetch(status) }
     end
 
-    # Lock every breaker behind the dependency open (calls raise RedLight, or
-    # return their fallback) or closed (calls always go through) until
-    # #unlock!. For a prefix dependency that covers the sub-circuits used so
-    # far in this process.
-    def lock_open!
-      circuit_names.each { |circuit| @runner.lock(circuit, :open) }
-      self
+    # Lock the dependency's breakers open (calls raise RedLight, or return
+    # their fallback) or closed (calls always go through) until #unlock!.
+    #
+    # +purposes:+ picks which breakers. +:all+ (the default) is every breaker
+    # behind the dependency, isolated purposes' own included, so `open?` is
+    # true afterwards. A purpose name, or an Array of them, locks only those
+    # purposes' breakers; a purpose sharing the dependency's breaker locks it
+    # for every purpose that shares it. For a prefix dependency the breakers
+    # are the sub-circuits used so far in this process.
+    #
+    # With a block, the lock lasts only for the block (it is undone even if
+    # the block raises) and the block's value is returned. Without one, the
+    # lock stays until #unlock!, StandardCircuit.reset_locks! or
+    # StandardCircuit.reset!, and the dependency is returned.
+    def lock_open!(purposes: :all, &block)
+      apply_lock(:open, purposes, &block)
     end
 
-    def lock_closed!
-      circuit_names.each { |circuit| @runner.lock(circuit, :closed) }
-      self
+    def lock_closed!(purposes: :all, &block)
+      apply_lock(:closed, purposes, &block)
     end
 
-    def unlock!
-      circuit_names.each { |circuit| @runner.unlock(circuit) }
+    def unlock!(purposes: :all)
+      circuits_for(purposes).each { |circuit| @runner.unlock(circuit) }
       self
     end
 
@@ -239,15 +247,14 @@ module StandardCircuit
       end
 
       # Locks this purpose's breaker. A purpose that shares the dependency's
-      # breaker locks it for every purpose sharing it.
-      def lock_open!
-        circuit_names.each { |circuit| dependency.runner.lock(circuit, :open) }
-        self
+      # breaker locks it for every purpose sharing it. With a block, only for
+      # the block (see Dependency#lock_open!).
+      def lock_open!(&block)
+        apply_lock(:open, &block)
       end
 
-      def lock_closed!
-        circuit_names.each { |circuit| dependency.runner.lock(circuit, :closed) }
-        self
+      def lock_closed!(&block)
+        apply_lock(:closed, &block)
       end
 
       def unlock!
@@ -260,6 +267,13 @@ module StandardCircuit
       end
 
       private
+
+      def apply_lock(state, &block)
+        return dependency.runner.with_locks(circuit_names, state, &block) if block
+
+        dependency.runner.with_locks(circuit_names, state)
+        self
+      end
 
       def color_for(states)
         metrics_only? ? "green" : Dependency.worst_color(states)
@@ -274,6 +288,22 @@ module StandardCircuit
       def status_for(states)
         Health.severity(criticality, color_for(states))
       end
+    end
+
+    private
+
+    def apply_lock(state, purposes, &block)
+      circuits = circuits_for(purposes)
+      return @runner.with_locks(circuits, state, &block) if block
+
+      @runner.with_locks(circuits, state)
+      self
+    end
+
+    def circuits_for(purposes)
+      return circuit_names if purposes == :all
+
+      Array(purposes).flat_map { |purpose_name| purpose(purpose_name).circuit_names }.uniq
     end
   end
 end

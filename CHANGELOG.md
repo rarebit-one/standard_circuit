@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`StandardCircuit.reset_locks!`** unlocks every circuit locked through
+  `dependency(name).lock_open!` / `lock_closed!` (or a purpose's) in this
+  process. Breaker state, forced states and the data store are left alone.
+  For suites that don't load `standard_circuit/rspec`:
+  `config.after { StandardCircuit.reset_locks! }`.
+- **Block form of `lock_open!` / `lock_closed!`**, on a dependency and on a
+  purpose: `dep.lock_open! { ... }` locks only for the block, unlocks even if
+  it raises, and returns the block's value. Without a block they still
+  return the handle.
+- **`purposes:` on `Dependency#lock_open!` / `lock_closed!` / `unlock!`.**
+  The default, `:all`, is unchanged: every breaker behind the dependency,
+  isolated purposes' own included, so `open?` is true afterwards
+  (luminality-web's specs rely on this). A purpose name or an Array of them
+  locks only those purposes' breakers.
+- **A warning when a lock leaks between examples.** When a call reaches a
+  circuit that a different RSpec example locked and nothing has cleared it,
+  StandardCircuit warns once per process, naming the circuit, the example
+  that locked it, and the three ways to clear locks. jumpdrive-web hit this
+  leak before it loaded the RSpec helper.
+
 ## [0.8.0] - 2026-11-25
 
 Every dependency now reports to StandardHealth (0.10+) as a row with a
