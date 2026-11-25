@@ -531,8 +531,27 @@ end
 ```
 
 - `json:` and `html:` run in the controller. Since 0.8 they may take the `RedLight` (`->(error) { ... }`); zero-arity lambdas and blocks keep working.
+- **Which body a request gets** (0.8.1): `json:` when the request asks for JSON (`Accept: application/json`, `.json`); then `stream:` in an `ActionController::Live` controller; then `json:` again for an API-shaped request, which is every request to an `ActionController::API` controller and any request that doesn't accept HTML (`Accept: text/plain`, or only unregistered types); then `html:`; then a bare `head`. `Accept: */*` and a missing Accept header both accept HTML, so an `ActionController::Base` controller still answers them with `html:`. An API controller answers them with `json:`, so it no longer needs an `html:` that repeats the JSON body.
 - **Every circuit-open response carries `Retry-After`** (0.8), in whole seconds and never less than 1: the time until the breaker's recovery probe when stoplight knows it, otherwise the circuit's `cool_off_time` (a breaker locked or forced open has no recovery time), otherwise no header. It is set before your lambda runs, so `render` and `head` both send it.
 - Declare `circuit_open_fallback` after any `rescue_from StandardError`, so the `RedLight` handler stays last.
+
+Replace your host code with:
+
+```ruby
+# Before: an API controller repeating its JSON body in html:, because Accept */*
+# (or no Accept header) skipped json:
+class Api::BaseController < ActionController::API
+  include StandardCircuit::ControllerSupport
+  circuit_open_fallback json: -> { render_api_error(:SVC_001) },
+                        html: -> { render_api_error(:SVC_001) }
+end
+
+# After
+class Api::BaseController < ActionController::API
+  include StandardCircuit::ControllerSupport
+  circuit_open_fallback json: -> { render_api_error(:SVC_001) }
+end
+```
 
 ## Streaming and non-controller contexts
 
