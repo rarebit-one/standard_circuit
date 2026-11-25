@@ -66,7 +66,7 @@ RSpec.describe StandardCircuit::ControllerSupport do
       Stoplight::Error::RedLight.new("stripe", cool_off_time: 30, retry_after: nil)
     end
 
-    let(:html_request) { double("req", format: double(json?: false)) }
+    let(:html_request) { double("req", format: double(json?: false), formats: [ Mime[:html] ]) }
     let(:json_request) { double("req", format: double(json?: true)) }
 
     before do
@@ -94,6 +94,117 @@ RSpec.describe StandardCircuit::ControllerSupport do
     end
   end
 
+  describe "content negotiation through a real request (0.8.1)" do
+    def build_controller(parent)
+      Class.new(parent) do
+        include StandardCircuit::ControllerSupport
+
+        circuit_open_fallback json: -> { render json: { error: "service_unavailable" }, status: :service_unavailable },
+          html: -> { render plain: "html fallback", status: :service_unavailable }
+
+        def show
+          raise Stoplight::Error::RedLight.new("stripe", cool_off_time: 30, retry_after: nil)
+        end
+      end
+    end
+
+    def dispatch(controller, accept: nil, path: "/thing")
+      env = Rack::MockRequest.env_for(path, "HTTP_ACCEPT" => accept)
+      env.delete("HTTP_ACCEPT") if accept.nil?
+      status, headers, body = controller.action(:show).call(env)
+      text = +""
+      body.each { |chunk| text << chunk }
+      [ status, headers["content-type"].to_s, text, headers["retry-after"] ]
+    end
+
+    before { StandardCircuit.config.register(:stripe, cool_off_time: 30) }
+
+    let(:base_controller) { build_controller(ActionController::Base) }
+    let(:api_controller) { build_controller(ActionController::API) }
+
+    {
+      "Accept: application/json" => "application/json",
+      "Accept: */*" => "*/*",
+      "no Accept header" => nil,
+      "Accept: text/plain" => "text/plain"
+    }.each do |label, accept|
+      it "answers an ActionController::API request with json: (#{label})" do
+        status, content_type, body, retry_after = dispatch(api_controller, accept: accept)
+
+        expect(status).to eq(503)
+        expect(content_type).to start_with("application/json")
+        expect(JSON.parse(body)).to eq("error" => "service_unavailable")
+        expect(retry_after).to eq("30")
+      end
+    end
+
+    it "answers an API controller with json: for a .json path too" do
+      _, content_type, = dispatch(api_controller, path: "/thing.json")
+
+      expect(content_type).to start_with("application/json")
+    end
+
+    it "keeps html: for a browser on an ActionController::Base controller" do
+      _, content_type, body = dispatch(base_controller,
+        accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+
+      expect(content_type).to start_with("text/plain")
+      expect(body).to eq("html fallback")
+    end
+
+    it "keeps html: on a Base controller for Accept: */* and for no Accept header (both accept HTML)" do
+      expect(dispatch(base_controller, accept: "*/*")[2]).to eq("html fallback")
+      expect(dispatch(base_controller, accept: nil)[2]).to eq("html fallback")
+    end
+
+    it "uses json: on a Base controller when the request asks for JSON" do
+      _, content_type, = dispatch(base_controller, accept: "application/json")
+
+      expect(content_type).to start_with("application/json")
+    end
+
+    it "uses json: on a Base controller when the request doesn't accept HTML" do
+      _, content_type, = dispatch(base_controller, accept: "text/plain")
+
+      expect(content_type).to start_with("application/json")
+    end
+
+    it "uses json: when the Accept header names only unregistered types" do
+      _, content_type, = dispatch(base_controller, accept: "application/x-unregistered")
+
+      expect(content_type).to start_with("application/json")
+    end
+
+    it "keeps stream: ahead of the API rule for a streaming controller that didn't ask for JSON" do
+      streaming = Class.new(ActionController::API) do
+        include StandardCircuit::ControllerSupport
+
+        circuit_open_fallback json: -> { :json }, stream: ->(_response) { :stream }
+      end
+      instance = streaming.new
+      allow(instance).to receive_messages(streaming_controller?: true, response: ActionDispatch::Response.new,
+        request: double("req", format: double(json?: false), formats: [ Mime::ALL ]))
+
+      expect(instance.send(:handle_circuit_open, Stoplight::Error::RedLight.new("stripe", cool_off_time: 30, retry_after: nil)))
+        .to eq(:stream)
+    end
+
+    it "falls back to html: and then head when there is no json: lambda" do
+      html_only = Class.new(ActionController::API) do
+        include StandardCircuit::ControllerSupport
+
+        def show
+          raise Stoplight::Error::RedLight.new("stripe", cool_off_time: 30, retry_after: nil)
+        end
+      end
+
+      status, _, body, retry_after = dispatch(html_only, accept: "*/*")
+      expect(status).to eq(503)
+      expect(body).to eq("")
+      expect(retry_after).to eq("30")
+    end
+  end
+
   describe "the RedLight reaches the json:/html: lambdas (0.8)" do
     let(:instance) { controller_class.new }
     let(:red_light) { Stoplight::Error::RedLight.new("stripe", cool_off_time: 30, retry_after: nil) }
@@ -101,7 +212,7 @@ RSpec.describe StandardCircuit::ControllerSupport do
     before { allow(instance).to receive(:response).and_return(ActionDispatch::Response.new) }
 
     def dispatch(json:)
-      allow(instance).to receive(:request).and_return(double("req", format: double(json?: json)))
+      allow(instance).to receive(:request).and_return(double("req", format: double(json?: json), formats: [ Mime[:html] ]))
       instance.send(:handle_circuit_open, red_light)
     end
 
@@ -136,7 +247,7 @@ RSpec.describe StandardCircuit::ControllerSupport do
 
     before do
       allow(instance).to receive_messages(response: response,
-        request: double("req", format: double(json?: false)))
+        request: double("req", format: double(json?: false), formats: [ Mime[:html] ]))
       allow(instance).to receive(:head)
     end
 
@@ -207,7 +318,7 @@ RSpec.describe StandardCircuit::ControllerSupport do
 
   describe "circuit-open request metric" do
     let(:instance) { controller_class.new }
-    let(:html_request) { double("req", format: double(json?: false)) }
+    let(:html_request) { double("req", format: double(json?: false), formats: [ Mime[:html] ]) }
 
     before do
       allow(::Sentry::Metrics).to receive(:count)
