@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-25
+
+Every dependency now reports to StandardHealth (0.10+) as a row with a
+status and four measurements; standard_health renders them as
+`dependencies`. `ControllerSupport` sends `Retry-After`. **No host code
+changes are needed.** One aggregate-tier status can change: a `:standard`
+dependency whose breaker is half-open reads `degraded`. See below.
+
 ### Added
 
 - **Every dependency reports to StandardHealth.** With standard_health 0.10
